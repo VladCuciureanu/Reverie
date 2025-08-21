@@ -18,6 +18,13 @@ Reverie connects to your sleep tracker and blocks production deploys while you'r
 ### 1. Deploy the Reverie service
 
 ```bash
+# Set required environment variables
+export OURA_TOKEN="your-oura-api-token"
+export GITHUB_TOKEN="your-github-app-token"
+export REVERIE_ENGINEER="vlad"
+export PORT=8000               # optional, defaults to 8000
+export REVERIE_DB="reverie.db" # optional, defaults to reverie.db
+
 deno task start
 ```
 
@@ -124,6 +131,38 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 └──────────────┘
 ```
 
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `OURA_TOKEN` | Yes | Oura Ring API personal access token |
+| `GITHUB_TOKEN` | Yes | GitHub App token for commit statuses and workflow dispatch |
+| `REVERIE_ENGINEER` | Yes | Engineer identifier (must match config) |
+| `PORT` | No | HTTP server port (default: `8000`) |
+| `REVERIE_DB` | No | SQLite database path (default: `reverie.db`) |
+
+## Project Structure
+
+```
+src/
+  main.ts              # HTTP server entrypoint
+  config.ts            # .reverie.yml parser
+  sleep/
+    types.ts           # SleepState, SleepStatus types
+    tracker.ts         # SleepTracker interface
+    oura.ts            # Oura Ring adapter
+    state.ts           # Sleep state cache with TTL
+    watcher.ts         # Wake watcher (auto-retrigger)
+  gate/
+    gate.ts            # Deploy gate decision logic
+    queue.ts           # SQLite deploy queue
+  github/
+    action.ts          # GitHub Action entrypoint
+    workflow.ts        # GitHub API client
+test/                  # Mirror of src/ with _test.ts files
+action.yml             # GitHub Action metadata
+```
+
 ## Development
 
 ```bash
@@ -131,4 +170,20 @@ deno task dev      # run with watch mode
 deno task test     # run tests
 deno task fmt      # format code
 deno task lint     # lint code
+```
+
+## Writing a Custom Sleep Tracker Adapter
+
+Implement the `SleepTracker` interface:
+
+```typescript
+import type { SleepTracker } from "./src/sleep/tracker.ts";
+import type { SleepStatus } from "./src/sleep/types.ts";
+
+class MyTracker implements SleepTracker {
+  async getStatus(engineer: string): Promise<SleepStatus | null> {
+    // Return { state: "awake" | "light" | "deep" | "rem", since: Date }
+    // Return null if status is unavailable
+  }
+}
 ```
