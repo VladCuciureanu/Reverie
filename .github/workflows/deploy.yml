@@ -1,0 +1,31 @@
+name: Deploy to Production (Example)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      override_by:
+        description: "Engineer overriding the sleep gate"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check sleep gate
+        uses: ./
+        with:
+          reverie_url: ${{ secrets.REVERIE_URL }}
+          engineer: ${{ vars.REVERIE_ENGINEER }}
+          override_by: ${{ github.event.inputs.override_by }}
+
+      - name: Deploy
+        run: echo "Deploying to production..."
