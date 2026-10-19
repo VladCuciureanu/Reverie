@@ -22,6 +22,7 @@ Reverie connects to your sleep tracker and blocks production deploys while you'r
 export OURA_TOKEN="your-oura-api-token"
 export GITHUB_TOKEN="your-github-app-token"
 export REVERIE_ENGINEER="vlad"
+export REVERIE_API_TOKEN="$(openssl rand -hex 32)" # shared secret for /gate/check
 export PORT=8000               # optional, defaults to 8000
 export REVERIE_DB="reverie.db" # optional, defaults to reverie.db
 
@@ -65,6 +66,7 @@ jobs:
         uses: reverie/gate@v1
         with:
           reverie_url: ${{ secrets.REVERIE_URL }}
+          reverie_token: ${{ secrets.REVERIE_API_TOKEN }}
           engineer: vlad
           override_by: ${{ github.event.inputs.override_by }}
 
@@ -98,6 +100,20 @@ jobs:
 ```
 
 ### `POST /gate/check`
+
+Requires `Authorization: Bearer $REVERIE_API_TOKEN` (otherwise `401`). Request body:
+
+```json
+{
+  "repo": "org/repo",
+  "branch": "main",
+  "sha": "abc123",
+  "workflow_run_id": "987654",
+  "override_by": "alice"
+}
+```
+
+`repo`, `branch`, `sha` and `workflow_run_id` must be non-empty strings; `override_by` is an optional string. Malformed JSON or invalid fields return `400`. Response (`200` when allowed, `423` when blocked):
 
 ```json
 {
@@ -139,6 +155,7 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 | `OURA_TOKEN` | Yes | Oura Ring API personal access token |
 | `GITHUB_TOKEN` | Yes | GitHub App token for commit statuses and workflow dispatch |
 | `REVERIE_ENGINEER` | Yes | Engineer identifier (must match config) |
+| `REVERIE_API_TOKEN` | Yes | Shared secret required as `Authorization: Bearer <token>` on `POST /gate/check`. Store the same value as the `REVERIE_API_TOKEN` repo secret and pass it to the action's `reverie_token` input. The service refuses to start without it. |
 | `PORT` | No | HTTP server port (default: `8000`) |
 | `REVERIE_DB` | No | SQLite database path (default: `reverie.db`) |
 

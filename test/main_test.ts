@@ -32,7 +32,18 @@ function makeDeps(tracker: StubTracker): ServerDeps & { queue: DeployQueue } {
       timeout_minutes: 480,
     },
     engineer: "vlad",
+    apiToken: "s3cret",
   };
+}
+
+const AUTH = { Authorization: "Bearer s3cret" };
+
+function gateCheck(body: BodyInit, headers: HeadersInit = AUTH): Request {
+  return new Request("http://localhost/gate/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body,
+  });
 }
 
 test("GET /status returns sleep state and gate decision", async () => {
@@ -59,7 +70,7 @@ test("POST /gate/check allows deploy when awake", async () => {
   const res = await handler(
     new Request("http://localhost/gate/check", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...AUTH },
       body: JSON.stringify({
         repo: "org/repo",
         branch: "main",
@@ -84,7 +95,7 @@ test("POST /gate/check blocks and queues deploy during REM", async () => {
   const res = await handler(
     new Request("http://localhost/gate/check", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...AUTH },
       body: JSON.stringify({
         repo: "org/repo",
         branch: "main",
@@ -109,7 +120,7 @@ test("POST /gate/check allows override during sleep", async () => {
   const res = await handler(
     new Request("http://localhost/gate/check", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...AUTH },
       body: JSON.stringify({
         repo: "org/repo",
         branch: "main",
@@ -163,5 +174,98 @@ test("startService creates a running WakeWatcher by default", async () => {
 
   await service.close();
   assert.deepStrictEqual(service.watcher.isRunning(), false);
+  deps.queue.close();
+});
+
+const validBody = JSON.stringify({
+  repo: "org/repo",
+  branch: "main",
+  sha: "abc123",
+  workflow_run_id: "run-1",
+});
+
+test("POST /gate/check rejects missing or wrong token with 401", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = makeDeps(tracker);
+  const handler = createHandler(deps);
+
+  const badHeaders: Record<string, string>[] = [
+    {},
+    { Authorization: "Bearer wrong" },
+    { Authorization: "Bearer s3cret-but-longer" },
+    { Authorization: "s3cret" },
+  ];
+  for (const headers of badHeaders) {
+    const res = await handler(gateCheck(validBody, headers));
+    assert.deepStrictEqual(res.status, 401);
+  }
+  assert.deepStrictEqual(deps.queue.count(), 0);
+  deps.queue.close();
+});
+
+test("POST /gate/check rejects everything when no token is configured", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "awake", since: new Date("2026-03-24T08:00:00Z") };
+  const deps = { ...makeDeps(tracker), apiToken: "" };
+  const handler = createHandler(deps);
+
+  const res = await handler(gateCheck(validBody, { Authorization: "Bearer " }));
+  assert.deepStrictEqual(res.status, 401);
+  deps.queue.close();
+});
+
+test("POST /gate/check rejects malformed bodies with 400", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = makeDeps(tracker);
+  const handler = createHandler(deps);
+
+  const bad: string[] = [
+    "{not json",
+    "",
+    "null",
+    "[]",
+    '"string"',
+    JSON.stringify({ branch: "main", sha: "abc123", workflow_run_id: "1" }),
+    JSON.stringify({
+      repo: "org/repo",
+      branch: "main",
+      sha: "abc123",
+      workflow_run_id: 123,
+    }),
+    JSON.stringify({
+      repo: "",
+      branch: "main",
+      sha: "abc123",
+      workflow_run_id: "1",
+    }),
+    JSON.stringify({
+      repo: "org/repo",
+      branch: "main",
+      sha: "abc123",
+      workflow_run_id: "1",
+      override_by: 42,
+    }),
+  ];
+  for (const body of bad) {
+    const res = await handler(gateCheck(body));
+    assert.deepStrictEqual(res.status, 400, `expected 400 for ${body}`);
+    const payload = await res.json();
+    assert.ok(typeof payload.error === "string");
+  }
+  assert.deepStrictEqual(deps.queue.count(), 0);
+  deps.queue.close();
+});
+
+test("POST /gate/check accepts a valid token and body", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "awake", since: new Date("2026-03-24T08:00:00Z") };
+  const deps = makeDeps(tracker);
+  const handler = createHandler(deps);
+
+  const res = await handler(gateCheck(validBody));
+  assert.deepStrictEqual(res.status, 200);
+  assert.deepStrictEqual((await res.json()).allowed, true);
   deps.queue.close();
 });

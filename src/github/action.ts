@@ -4,6 +4,8 @@ import process from "node:process";
 
 export interface ActionInputs {
   reverieUrl: string;
+  /** Bearer token for the Reverie service (REVERIE_API_TOKEN). */
+  token: string;
   engineer: string;
   repo: string;
   branch: string;
@@ -33,7 +35,10 @@ export async function runAction(
 
   const response = await fetchFn(`${inputs.reverieUrl}/gate/check`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${inputs.token}`,
+    },
     body: JSON.stringify(body),
   });
 
@@ -41,9 +46,9 @@ export async function runAction(
 
   return {
     allowed: result.allowed,
-    reason: result.reason,
+    reason: result.reason ?? result.error,
     sleep_state: result.sleep_state,
-    exitCode: result.allowed ? 0 : 1,
+    exitCode: result.allowed === true ? 0 : 1,
   };
 }
 
@@ -53,6 +58,7 @@ if (
 ) {
   const inputs: ActionInputs = {
     reverieUrl: process.env.INPUT_REVERIE_URL ?? "",
+    token: process.env.INPUT_REVERIE_TOKEN ?? "",
     engineer: process.env.INPUT_ENGINEER ?? "",
     repo: process.env.GITHUB_REPOSITORY ?? "",
     branch: process.env.GITHUB_REF_NAME ?? "",

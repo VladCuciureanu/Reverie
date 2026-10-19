@@ -4,6 +4,7 @@ import { runAction, type ActionInputs } from "../../src/github/action.ts";
 
 const baseInputs: ActionInputs = {
   reverieUrl: "http://localhost:8000",
+  token: "s3cret",
   engineer: "vlad",
   repo: "org/repo",
   branch: "main",
@@ -75,4 +76,29 @@ test("action passes override_by when provided", async () => {
   assert.deepStrictEqual(result.allowed, true);
   const parsed = JSON.parse(capturedBody);
   assert.deepStrictEqual(parsed.override_by, "alice");
+});
+
+test("action sends the bearer token", async () => {
+  let capturedHeaders = new Headers();
+  const fetchFn = (_input: string | URL | Request, init?: RequestInit) => {
+    capturedHeaders = new Headers(init?.headers);
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ allowed: true, reason: "ok", sleep_state: "awake" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  };
+
+  await runAction(baseInputs, fetchFn as typeof fetch);
+  assert.deepStrictEqual(capturedHeaders.get("authorization"), "Bearer s3cret");
+});
+
+test("action fails when the service rejects the request", async () => {
+  const result = await runAction(
+    baseInputs,
+    mockFetch({ error: "Unauthorized" }, 401),
+  );
+  assert.deepStrictEqual(result.exitCode, 1);
+  assert.deepStrictEqual(result.reason, "Unauthorized");
 });

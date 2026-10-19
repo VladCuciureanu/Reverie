@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
@@ -20,6 +21,49 @@ export interface ServerDeps {
   github: GitHubClient;
   gateConfig: GateConfig;
   engineer: string;
+  /** Shared secret callers must send as `Authorization: Bearer <token>`. */
+  apiToken: string;
+}
+
+interface GateCheckRequest {
+  repo: string;
+  branch: string;
+  sha: string;
+  workflow_run_id: string;
+  override_by?: string;
+}
+
+/** Constant-time bearer token check. An empty configured token never matches. */
+function isAuthorized(req: Request, apiToken: string): boolean {
+  if (!apiToken) return false;
+  const match = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "");
+  if (!match) return false;
+  const given = Buffer.from(match[1]);
+  const expected = Buffer.from(apiToken);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+/** Returns the validated request, or an error message describing the problem. */
+function parseGateCheck(body: unknown): GateCheckRequest | string {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return "Request body must be a JSON object";
+  }
+  const b = body as Record<string, unknown>;
+  for (const field of ["repo", "branch", "sha", "workflow_run_id"] as const) {
+    if (typeof b[field] !== "string" || b[field] === "") {
+      return `Field "${field}" must be a non-empty string`;
+    }
+  }
+  if (b.override_by !== undefined && typeof b.override_by !== "string") {
+    return `Field "override_by" must be a string`;
+  }
+  return {
+    repo: b.repo as string,
+    branch: b.branch as string,
+    sha: b.sha as string,
+    workflow_run_id: b.workflow_run_id as string,
+    override_by: (b.override_by as string | undefined) || undefined,
+  };
 }
 
 function json(data: unknown, status = 200): Response {
@@ -32,7 +76,7 @@ function json(data: unknown, status = 200): Response {
 export function createHandler(
   deps: ServerDeps,
 ): (req: Request) => Promise<Response> {
-  const { sleepCache, queue, github, gateConfig, engineer } = deps;
+  const { sleepCache, queue, github, gateConfig, engineer, apiToken } = deps;
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -50,14 +94,21 @@ export function createHandler(
     }
 
     if (req.method === "POST" && url.pathname === "/gate/check") {
-      const body = await req.json();
-      const { repo, branch, sha, workflow_run_id, override_by } = body as {
-        repo: string;
-        branch: string;
-        sha: string;
-        workflow_run_id: string;
-        override_by?: string;
-      };
+      if (!isAuthorized(req, apiToken)) {
+        return json({ error: "Unauthorized" }, 401);
+      }
+
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: "Request body must be valid JSON" }, 400);
+      }
+      const parsed = parseGateCheck(body);
+      if (typeof parsed === "string") {
+        return json({ error: parsed }, 400);
+      }
+      const { repo, branch, sha, workflow_run_id, override_by } = parsed;
 
       const status = await sleepCache.getStatus(engineer);
       const result = checkGate(status, gateConfig, override_by);
@@ -180,6 +231,11 @@ if (
   const engineerName = process.env.REVERIE_ENGINEER ?? "engineer";
   const port = Number(process.env.PORT ?? "8000");
   const dbPath = process.env.REVERIE_DB ?? "reverie.db";
+  const apiToken = process.env.REVERIE_API_TOKEN ?? "";
+  if (!apiToken) {
+    console.error("REVERIE_API_TOKEN must be set");
+    process.exit(1);
+  }
 
   const tracker = new OuraTracker({ token: ouraToken });
   const sleepCache = new SleepStateCache(tracker);
@@ -194,7 +250,14 @@ if (
   };
 
   const service = startService(
-    { sleepCache, queue, github, gateConfig, engineer: engineerName },
+    {
+      sleepCache,
+      queue,
+      github,
+      gateConfig,
+      engineer: engineerName,
+      apiToken,
+    },
     {
       port,
       onListening: () => console.log(`Listening on http://localhost:${port}/`),

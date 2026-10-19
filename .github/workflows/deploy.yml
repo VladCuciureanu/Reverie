@@ -24,6 +24,7 @@ jobs:
         uses: ./
         with:
           reverie_url: ${{ secrets.REVERIE_URL }}
+          reverie_token: ${{ secrets.REVERIE_API_TOKEN }}
           engineer: ${{ vars.REVERIE_ENGINEER }}
           override_by: ${{ github.event.inputs.override_by }}
 
