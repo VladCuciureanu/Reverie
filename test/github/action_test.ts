@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { runAction, type ActionInputs } from "../../src/github/action.ts";
 
 const baseInputs: ActionInputs = {
@@ -20,7 +21,7 @@ function mockFetch(response: unknown, status = 200): typeof fetch {
     );
 }
 
-Deno.test("action exits 0 when deploy is allowed", async () => {
+test("action exits 0 when deploy is allowed", async () => {
   const result = await runAction(
     baseInputs,
     mockFetch({
@@ -29,11 +30,11 @@ Deno.test("action exits 0 when deploy is allowed", async () => {
       sleep_state: "awake",
     }),
   );
-  assertEquals(result.exitCode, 0);
-  assertEquals(result.allowed, true);
+  assert.deepStrictEqual(result.exitCode, 0);
+  assert.deepStrictEqual(result.allowed, true);
 });
 
-Deno.test("action exits 1 when deploy is blocked", async () => {
+test("action exits 1 when deploy is blocked", async () => {
   const result = await runAction(
     baseInputs,
     mockFetch(
@@ -46,17 +47,14 @@ Deno.test("action exits 1 when deploy is blocked", async () => {
       423,
     ),
   );
-  assertEquals(result.exitCode, 1);
-  assertEquals(result.allowed, false);
-  assertEquals(result.sleep_state, "rem");
+  assert.deepStrictEqual(result.exitCode, 1);
+  assert.deepStrictEqual(result.allowed, false);
+  assert.deepStrictEqual(result.sleep_state, "rem");
 });
 
-Deno.test("action passes override_by when provided", async () => {
+test("action passes override_by when provided", async () => {
   let capturedBody = "";
-  const fetchFn = (
-    _input: string | URL | Request,
-    init?: RequestInit,
-  ) => {
+  const fetchFn = (_input: string | URL | Request, init?: RequestInit) => {
     capturedBody = init?.body as string;
     return Promise.resolve(
       new Response(
@@ -74,7 +72,7 @@ Deno.test("action passes override_by when provided", async () => {
     { ...baseInputs, overrideBy: "alice" },
     fetchFn as typeof fetch,
   );
-  assertEquals(result.allowed, true);
+  assert.deepStrictEqual(result.allowed, true);
   const parsed = JSON.parse(capturedBody);
-  assertEquals(parsed.override_by, "alice");
+  assert.deepStrictEqual(parsed.override_by, "alice");
 });

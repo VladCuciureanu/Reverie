@@ -1,4 +1,4 @@
-import { parse as parseYaml } from "@std/yaml";
+import { parse as parseYaml } from "yaml";
 import type { SleepState } from "./sleep/types.ts";
 
 export interface GateConfig {
@@ -58,9 +58,10 @@ export function parseConfig(yaml: string): ReverieConfig {
       ? validateSleepStates(rawGate.allow_on)
       : DEFAULT_GATE.allow_on,
     fallback: rawGate.fallback === "allow" ? "allow" : DEFAULT_GATE.fallback,
-    timeout_minutes: typeof rawGate.timeout_minutes === "number"
-      ? rawGate.timeout_minutes
-      : DEFAULT_GATE.timeout_minutes,
+    timeout_minutes:
+      typeof rawGate.timeout_minutes === "number"
+        ? rawGate.timeout_minutes
+        : DEFAULT_GATE.timeout_minutes,
   };
 
   return {

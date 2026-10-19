@@ -16,9 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: denoland/setup-deno@v2
+      - uses: actions/setup-node@v4
         with:
-          deno-version: v2.x
+          node-version-file: .nvmrc
 
       - name: Check sleep gate
         uses: ./

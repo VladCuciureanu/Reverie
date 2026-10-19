@@ -1,7 +1,8 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { parseConfig } from "../src/config.ts";
 
-Deno.test("parses valid full config", () => {
+test("parses valid full config", () => {
   const yaml = `
 sleep_tracker: oura
 engineer: vlad
@@ -12,53 +13,51 @@ gate:
   timeout_minutes: 480
 `;
   const config = parseConfig(yaml);
-  assertEquals(config.sleep_tracker, "oura");
-  assertEquals(config.engineer, "vlad");
-  assertEquals(config.gate.block_on, ["deep", "rem"]);
-  assertEquals(config.gate.allow_on, ["awake", "light"]);
-  assertEquals(config.gate.fallback, "block");
-  assertEquals(config.gate.timeout_minutes, 480);
+  assert.deepStrictEqual(config.sleep_tracker, "oura");
+  assert.deepStrictEqual(config.engineer, "vlad");
+  assert.deepStrictEqual(config.gate.block_on, ["deep", "rem"]);
+  assert.deepStrictEqual(config.gate.allow_on, ["awake", "light"]);
+  assert.deepStrictEqual(config.gate.fallback, "block");
+  assert.deepStrictEqual(config.gate.timeout_minutes, 480);
 });
 
-Deno.test("applies defaults for missing gate fields", () => {
+test("applies defaults for missing gate fields", () => {
   const yaml = `
 sleep_tracker: oura
 engineer: vlad
 `;
   const config = parseConfig(yaml);
-  assertEquals(config.gate.block_on, ["deep", "rem"]);
-  assertEquals(config.gate.allow_on, ["awake", "light"]);
-  assertEquals(config.gate.fallback, "block");
-  assertEquals(config.gate.timeout_minutes, 480);
+  assert.deepStrictEqual(config.gate.block_on, ["deep", "rem"]);
+  assert.deepStrictEqual(config.gate.allow_on, ["awake", "light"]);
+  assert.deepStrictEqual(config.gate.fallback, "block");
+  assert.deepStrictEqual(config.gate.timeout_minutes, 480);
 });
 
-Deno.test("throws on missing sleep_tracker", () => {
-  assertThrows(
-    () => parseConfig("engineer: vlad"),
-    Error,
-    "Missing required field: sleep_tracker",
-  );
+test("throws on missing sleep_tracker", () => {
+  assert.throws(() => parseConfig("engineer: vlad"), {
+    message: "Missing required field: sleep_tracker",
+  });
 });
 
-Deno.test("throws on missing engineer", () => {
-  assertThrows(
-    () => parseConfig("sleep_tracker: oura"),
-    Error,
-    "Missing required field: engineer",
-  );
+test("throws on missing engineer", () => {
+  assert.throws(() => parseConfig("sleep_tracker: oura"), {
+    message: "Missing required field: engineer",
+  });
 });
 
-Deno.test("throws on invalid sleep state", () => {
+test("throws on invalid sleep state", () => {
   const yaml = `
 sleep_tracker: oura
 engineer: vlad
 gate:
   block_on: [deep, napping]
 `;
-  assertThrows(() => parseConfig(yaml), Error, "Invalid sleep state: napping");
+  assert.throws(() => parseConfig(yaml), {
+    message: "Invalid sleep state: napping",
+  });
 });
 
-Deno.test("parses fallback allow", () => {
+test("parses fallback allow", () => {
   const yaml = `
 sleep_tracker: oura
 engineer: vlad
@@ -66,5 +65,5 @@ gate:
   fallback: allow
 `;
   const config = parseConfig(yaml);
-  assertEquals(config.gate.fallback, "allow");
+  assert.deepStrictEqual(config.gate.fallback, "allow");
 });

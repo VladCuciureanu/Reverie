@@ -1,3 +1,9 @@
+import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import process from "node:process";
 import { SleepStateCache } from "./sleep/state.ts";
 import { OuraTracker } from "./sleep/oura.ts";
 import { checkGate } from "./gate/gate.ts";
@@ -22,7 +28,9 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-export function createHandler(deps: ServerDeps): (req: Request) => Promise<Response> {
+export function createHandler(
+  deps: ServerDeps,
+): (req: Request) => Promise<Response> {
   const { sleepCache, queue, github, gateConfig, engineer } = deps;
 
   return async (req: Request): Promise<Response> => {
@@ -67,7 +75,7 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
     }
 
     if (req.method === "POST" && url.pathname === "/webhook/sleep") {
-      const body = await req.json() as SleepStatus;
+      const body = (await req.json()) as SleepStatus;
       // Webhook pushes are handled by the cache layer refreshing on next poll.
       // This endpoint exists for future direct push support.
       return json({ received: true, state: body.state });
@@ -77,12 +85,53 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
   };
 }
 
-if (import.meta.main) {
-  const ouraToken = Deno.env.get("OURA_TOKEN") ?? "";
-  const ghToken = Deno.env.get("GITHUB_TOKEN") ?? "";
-  const engineerName = Deno.env.get("REVERIE_ENGINEER") ?? "engineer";
-  const port = Number(Deno.env.get("PORT") ?? "8000");
-  const dbPath = Deno.env.get("REVERIE_DB") ?? "reverie.db";
+/** Adapts a Fetch-style handler to node:http (replacement for Deno.serve). */
+function toNodeListener(
+  handler: (req: Request) => Promise<Response>,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    try {
+      const url = new URL(
+        req.url ?? "/",
+        `http://${req.headers.host ?? "localhost"}`,
+      );
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (Array.isArray(value)) {
+          for (const v of value) headers.append(key, v);
+        } else if (value !== undefined) {
+          headers.set(key, value);
+        }
+      }
+      const hasBody = req.method !== "GET" && req.method !== "HEAD";
+      const request = new Request(url, {
+        method: req.method,
+        headers,
+        body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
+        duplex: hasBody ? "half" : undefined,
+      } as RequestInit);
+
+      const response = await handler(request);
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(Buffer.from(await response.arrayBuffer()));
+    } catch (err) {
+      console.error(err);
+      if (!res.headersSent)
+        res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Internal Server Error");
+    }
+  };
+}
+
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const ouraToken = process.env.OURA_TOKEN ?? "";
+  const ghToken = process.env.GITHUB_TOKEN ?? "";
+  const engineerName = process.env.REVERIE_ENGINEER ?? "engineer";
+  const port = Number(process.env.PORT ?? "8000");
+  const dbPath = process.env.REVERIE_DB ?? "reverie.db";
 
   const tracker = new OuraTracker({ token: ouraToken });
   const sleepCache = new SleepStateCache(tracker);
@@ -104,5 +153,7 @@ if (import.meta.main) {
     engineer: engineerName,
   });
 
-  Deno.serve({ port }, handler);
+  createServer(toNodeListener(handler)).listen(port, () => {
+    console.log(`Listening on http://localhost:${port}/`);
+  });
 }

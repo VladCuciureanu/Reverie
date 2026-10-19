@@ -1,3 +1,7 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import process from "node:process";
+
 export interface ActionInputs {
   reverieUrl: string;
   engineer: string;
@@ -43,15 +47,18 @@ export async function runAction(
   };
 }
 
-if (import.meta.main) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   const inputs: ActionInputs = {
-    reverieUrl: Deno.env.get("INPUT_REVERIE_URL") ?? "",
-    engineer: Deno.env.get("INPUT_ENGINEER") ?? "",
-    repo: Deno.env.get("GITHUB_REPOSITORY") ?? "",
-    branch: Deno.env.get("GITHUB_REF_NAME") ?? "",
-    sha: Deno.env.get("GITHUB_SHA") ?? "",
-    workflowRunId: Deno.env.get("GITHUB_RUN_ID") ?? "",
-    overrideBy: Deno.env.get("INPUT_OVERRIDE_BY") || undefined,
+    reverieUrl: process.env.INPUT_REVERIE_URL ?? "",
+    engineer: process.env.INPUT_ENGINEER ?? "",
+    repo: process.env.GITHUB_REPOSITORY ?? "",
+    branch: process.env.GITHUB_REF_NAME ?? "",
+    sha: process.env.GITHUB_SHA ?? "",
+    workflowRunId: process.env.GITHUB_RUN_ID ?? "",
+    overrideBy: process.env.INPUT_OVERRIDE_BY || undefined,
   };
 
   const result = await runAction(inputs);
@@ -60,11 +67,9 @@ if (import.meta.main) {
     console.log(`✅ ${result.reason}`);
   } else {
     console.error(`❌ Deployment rejected: ${result.reason}`);
-    console.error(
-      `   Current state: ${result.sleep_state}`,
-    );
+    console.error(`   Current state: ${result.sleep_state}`);
     console.error(`   Deploy will auto-retry when engineer is awake.`);
   }
 
-  Deno.exit(result.exitCode);
+  process.exit(result.exitCode);
 }

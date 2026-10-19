@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import type { SleepTracker } from "../../src/sleep/tracker.ts";
 import type { SleepStatus } from "../../src/sleep/types.ts";
 
@@ -14,18 +15,18 @@ class MockTracker implements SleepTracker {
   }
 }
 
-Deno.test("tracker returns status for known engineer", async () => {
+test("tracker returns status for known engineer", async () => {
   const tracker = new MockTracker();
   const since = new Date("2026-03-24T02:00:00Z");
   tracker.set("vlad", { state: "rem", since });
 
   const status = await tracker.getStatus("vlad");
-  assertEquals(status?.state, "rem");
-  assertEquals(status?.since, since);
+  assert.deepStrictEqual(status?.state, "rem");
+  assert.deepStrictEqual(status?.since, since);
 });
 
-Deno.test("tracker returns null for unknown engineer", async () => {
+test("tracker returns null for unknown engineer", async () => {
   const tracker = new MockTracker();
   const status = await tracker.getStatus("unknown");
-  assertEquals(status, null);
+  assert.deepStrictEqual(status, null);
 });

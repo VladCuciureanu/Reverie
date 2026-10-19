@@ -1,7 +1,7 @@
 import type { SleepTracker } from "./tracker.ts";
 import type { SleepState } from "./types.ts";
-import { DeployQueue } from "../gate/queue.ts";
-import { GitHubClient } from "../github/workflow.ts";
+import type { DeployQueue } from "../gate/queue.ts";
+import type { GitHubClient } from "../github/workflow.ts";
 
 const DEFAULT_POLL_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -12,7 +12,7 @@ export class WakeWatcher {
   private engineer: string;
   private pollMs: number;
   private lastState: SleepState | null = null;
-  private intervalId: number | null = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
   private onDrain?: (count: number) => void;
 
   constructor(options: {
@@ -34,7 +34,9 @@ export class WakeWatcher {
   async poll(): Promise<number> {
     const status = await this.tracker.getStatus(this.engineer);
     const currentState = status?.state ?? null;
-    const wasAsleep = this.lastState !== null && this.lastState !== "awake" &&
+    const wasAsleep =
+      this.lastState !== null &&
+      this.lastState !== "awake" &&
       this.lastState !== "light";
     const isAwake = currentState === "awake" || currentState === "light";
     this.lastState = currentState;

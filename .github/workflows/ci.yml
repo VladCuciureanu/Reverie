@@ -12,15 +12,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: denoland/setup-deno@v2
+      - uses: actions/setup-node@v4
         with:
-          deno-version: v2.x
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
 
       - name: Format check
-        run: deno fmt --check
+        run: npx biome format .
 
       - name: Lint
-        run: deno lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Test
-        run: deno task test
+        run: npm test

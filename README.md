@@ -25,7 +25,8 @@ export REVERIE_ENGINEER="vlad"
 export PORT=8000               # optional, defaults to 8000
 export REVERIE_DB="reverie.db" # optional, defaults to reverie.db
 
-deno task start
+npm install
+npm start
 ```
 
 ### 2. Add `.reverie.yml` to your repo
@@ -113,7 +114,7 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 
 ## Architecture
 
-- **Runtime**: Deno (TypeScript)
+- **Runtime**: Node.js 24+ (TypeScript via built-in type stripping)
 - **Persistence**: SQLite (deploy queue)
 - **Auth**: GitHub App token
 - **Sleep tracker**: Generic adapter interface (Oura Ring reference implementation)
@@ -121,7 +122,7 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 ```
 ┌──────────────┐    poll/webhook    ┌──────────────────┐
 │  Sleep       │ ──────────────────▶│  Reverie Service │
-│  Tracker     │                    │  (Deno/TS)       │
+│  Tracker     │                    │  (Node/TS)       │
 └──────────────┘                    │                  │
                                     │  - Sleep state   │
 ┌──────────────┐   HTTP check       │  - Deploy queue  │
@@ -166,10 +167,11 @@ action.yml             # GitHub Action metadata
 ## Development
 
 ```bash
-deno task dev      # run with watch mode
-deno task test     # run tests
-deno task fmt      # format code
-deno task lint     # lint code
+npm run dev        # run with watch mode
+npm test           # run tests
+npm run typecheck  # type-check with tsc
+npm run format     # format code (Biome)
+npm run lint       # lint code (Biome)
 ```
 
 ## Writing a Custom Sleep Tracker Adapter

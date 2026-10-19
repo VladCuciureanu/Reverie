@@ -1,4 +1,4 @@
-import { Database } from "jsr:@db/sqlite@0.12";
+import { DatabaseSync } from "node:sqlite";
 
 export interface QueuedDeploy {
   id: number;
@@ -10,10 +10,10 @@ export interface QueuedDeploy {
 }
 
 export class DeployQueue {
-  private db: Database;
+  private db: DatabaseSync;
 
   constructor(dbPath: string = "reverie.db") {
-    this.db = new Database(dbPath);
+    this.db = new DatabaseSync(dbPath);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS deploy_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,34 +33,32 @@ export class DeployQueue {
     workflowRunId: string,
   ): void {
     // Supersede earlier deploys on the same repo+branch
-    this.db.exec(
-      "DELETE FROM deploy_queue WHERE repo = ? AND branch = ?",
-      repo,
-      branch,
-    );
-    this.db.exec(
-      "INSERT INTO deploy_queue (repo, branch, sha, workflow_run_id) VALUES (?, ?, ?, ?)",
-      repo,
-      branch,
-      sha,
-      workflowRunId,
-    );
+    this.db
+      .prepare("DELETE FROM deploy_queue WHERE repo = ? AND branch = ?")
+      .run(repo, branch);
+    this.db
+      .prepare(
+        "INSERT INTO deploy_queue (repo, branch, sha, workflow_run_id) VALUES (?, ?, ?, ?)",
+      )
+      .run(repo, branch, sha, workflowRunId);
   }
 
   peek(): QueuedDeploy[] {
-    return this.db.prepare(
-      "SELECT id, repo, branch, sha, workflow_run_id, queued_at FROM deploy_queue ORDER BY queued_at ASC",
-    ).all() as QueuedDeploy[];
+    return this.db
+      .prepare(
+        "SELECT id, repo, branch, sha, workflow_run_id, queued_at FROM deploy_queue ORDER BY queued_at ASC",
+      )
+      .all() as unknown as QueuedDeploy[];
   }
 
   remove(id: number): void {
-    this.db.exec("DELETE FROM deploy_queue WHERE id = ?", id);
+    this.db.prepare("DELETE FROM deploy_queue WHERE id = ?").run(id);
   }
 
   count(): number {
-    const row = this.db.prepare(
-      "SELECT COUNT(*) as count FROM deploy_queue",
-    ).get() as { count: number };
+    const row = this.db
+      .prepare("SELECT COUNT(*) as count FROM deploy_queue")
+      .get() as unknown as { count: number };
     return row.count;
   }
 

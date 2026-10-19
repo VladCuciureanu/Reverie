@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { createHandler, type ServerDeps } from "../src/main.ts";
 import type { SleepTracker } from "../src/sleep/tracker.ts";
 import type { SleepStatus } from "../src/sleep/types.ts";
@@ -33,22 +34,22 @@ function makeDeps(tracker: StubTracker): ServerDeps & { queue: DeployQueue } {
   };
 }
 
-Deno.test("GET /status returns sleep state and gate decision", async () => {
+test("GET /status returns sleep state and gate decision", async () => {
   const tracker = new StubTracker();
   tracker.status = { state: "awake", since: new Date("2026-03-24T08:00:00Z") };
   const deps = makeDeps(tracker);
   const handler = createHandler(deps);
 
   const res = await handler(new Request("http://localhost/status"));
-  assertEquals(res.status, 200);
+  assert.deepStrictEqual(res.status, 200);
   const body = await res.json();
-  assertEquals(body.engineer, "vlad");
-  assertEquals(body.sleep_state, "awake");
-  assertEquals(body.gate, "open");
+  assert.deepStrictEqual(body.engineer, "vlad");
+  assert.deepStrictEqual(body.sleep_state, "awake");
+  assert.deepStrictEqual(body.gate, "open");
   deps.queue.close();
 });
 
-Deno.test("POST /gate/check allows deploy when awake", async () => {
+test("POST /gate/check allows deploy when awake", async () => {
   const tracker = new StubTracker();
   tracker.status = { state: "awake", since: new Date("2026-03-24T08:00:00Z") };
   const deps = makeDeps(tracker);
@@ -66,14 +67,14 @@ Deno.test("POST /gate/check allows deploy when awake", async () => {
       }),
     }),
   );
-  assertEquals(res.status, 200);
+  assert.deepStrictEqual(res.status, 200);
   const body = await res.json();
-  assertEquals(body.allowed, true);
-  assertEquals(deps.queue.count(), 0);
+  assert.deepStrictEqual(body.allowed, true);
+  assert.deepStrictEqual(deps.queue.count(), 0);
   deps.queue.close();
 });
 
-Deno.test("POST /gate/check blocks and queues deploy during REM", async () => {
+test("POST /gate/check blocks and queues deploy during REM", async () => {
   const tracker = new StubTracker();
   tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
   const deps = makeDeps(tracker);
@@ -91,14 +92,14 @@ Deno.test("POST /gate/check blocks and queues deploy during REM", async () => {
       }),
     }),
   );
-  assertEquals(res.status, 423);
+  assert.deepStrictEqual(res.status, 423);
   const body = await res.json();
-  assertEquals(body.allowed, false);
-  assertEquals(deps.queue.count(), 1);
+  assert.deepStrictEqual(body.allowed, false);
+  assert.deepStrictEqual(deps.queue.count(), 1);
   deps.queue.close();
 });
 
-Deno.test("POST /gate/check allows override during sleep", async () => {
+test("POST /gate/check allows override during sleep", async () => {
   const tracker = new StubTracker();
   tracker.status = { state: "deep", since: new Date("2026-03-24T02:00:00Z") };
   const deps = makeDeps(tracker);
@@ -117,19 +118,19 @@ Deno.test("POST /gate/check allows override during sleep", async () => {
       }),
     }),
   );
-  assertEquals(res.status, 200);
+  assert.deepStrictEqual(res.status, 200);
   const body = await res.json();
-  assertEquals(body.allowed, true);
-  assertEquals(deps.queue.count(), 0);
+  assert.deepStrictEqual(body.allowed, true);
+  assert.deepStrictEqual(deps.queue.count(), 0);
   deps.queue.close();
 });
 
-Deno.test("GET /unknown returns 404", async () => {
+test("GET /unknown returns 404", async () => {
   const tracker = new StubTracker();
   const deps = makeDeps(tracker);
   const handler = createHandler(deps);
 
   const res = await handler(new Request("http://localhost/unknown"));
-  assertEquals(res.status, 404);
+  assert.deepStrictEqual(res.status, 404);
   deps.queue.close();
 });

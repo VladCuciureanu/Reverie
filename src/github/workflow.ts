@@ -20,8 +20,7 @@ export class GitHubClient {
     workflowId: string,
     ref: string,
   ): Promise<boolean> {
-    const url =
-      `${this.baseUrl}/repos/${repo}/actions/workflows/${workflowId}/dispatches`;
+    const url = `${this.baseUrl}/repos/${repo}/actions/workflows/${workflowId}/dispatches`;
     const response = await this.fetchFn(url, {
       method: "POST",
       headers: {

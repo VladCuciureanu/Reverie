@@ -12,9 +12,9 @@ interface OuraResponse {
 }
 
 const OURA_STATE_MAP: Record<string, SleepState> = {
-  "long_sleep": "deep",
-  "late_nap": "light",
-  "rest": "light",
+  long_sleep: "deep",
+  late_nap: "light",
+  rest: "light",
 };
 
 export class OuraTracker implements SleepTracker {

@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { WakeWatcher } from "../../src/sleep/watcher.ts";
 import type { SleepTracker } from "../../src/sleep/tracker.ts";
 import type { SleepStatus } from "../../src/sleep/types.ts";
@@ -24,7 +25,7 @@ function setup() {
   return { tracker, queue, github };
 }
 
-Deno.test("drains queue on sleep-to-awake transition", async () => {
+test("drains queue on sleep-to-awake transition", async () => {
   const { tracker, queue, github } = setup();
   let drainedCount = 0;
 
@@ -33,29 +34,29 @@ Deno.test("drains queue on sleep-to-awake transition", async () => {
     queue,
     github,
     engineer: "vlad",
-    onDrain: (n) => drainedCount = n,
+    onDrain: (n) => (drainedCount = n),
   });
 
   // First poll: asleep
   tracker.status = { state: "rem", since: new Date() };
   await watcher.poll();
-  assertEquals(drainedCount, 0);
+  assert.deepStrictEqual(drainedCount, 0);
 
   // Enqueue a deploy while asleep
   queue.enqueue("org/repo", "main", "abc123", "run-1");
-  assertEquals(queue.count(), 1);
+  assert.deepStrictEqual(queue.count(), 1);
 
   // Second poll: awake — should drain
   tracker.status = { state: "awake", since: new Date() };
   const drained = await watcher.poll();
-  assertEquals(drained, 1);
-  assertEquals(queue.count(), 0);
-  assertEquals(drainedCount, 1);
+  assert.deepStrictEqual(drained, 1);
+  assert.deepStrictEqual(queue.count(), 0);
+  assert.deepStrictEqual(drainedCount, 1);
 
   queue.close();
 });
 
-Deno.test("does not drain when staying awake", async () => {
+test("does not drain when staying awake", async () => {
   const { tracker, queue, github } = setup();
 
   const watcher = new WakeWatcher({
@@ -72,13 +73,13 @@ Deno.test("does not drain when staying awake", async () => {
 
   tracker.status = { state: "awake", since: new Date() };
   const drained = await watcher.poll();
-  assertEquals(drained, 0);
-  assertEquals(queue.count(), 1);
+  assert.deepStrictEqual(drained, 0);
+  assert.deepStrictEqual(queue.count(), 1);
 
   queue.close();
 });
 
-Deno.test("does not drain when staying asleep", async () => {
+test("does not drain when staying asleep", async () => {
   const { tracker, queue, github } = setup();
 
   const watcher = new WakeWatcher({
@@ -95,8 +96,8 @@ Deno.test("does not drain when staying asleep", async () => {
 
   tracker.status = { state: "rem", since: new Date() };
   const drained = await watcher.poll();
-  assertEquals(drained, 0);
-  assertEquals(queue.count(), 1);
+  assert.deepStrictEqual(drained, 0);
+  assert.deepStrictEqual(queue.count(), 1);
 
   queue.close();
 });
