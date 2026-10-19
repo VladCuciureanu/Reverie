@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { OuraTracker } from "./sleep/oura.ts";
 import { checkGate } from "./gate/gate.ts";
 import { DeployQueue } from "./gate/queue.ts";
 import { GitHubClient } from "./github/workflow.ts";
+import { WakeWatcher } from "./sleep/watcher.ts";
 import type { SleepTracker } from "./sleep/tracker.ts";
 import type { GateConfig } from "./config.ts";
 import type { SleepStatus } from "./sleep/types.ts";
@@ -123,6 +124,53 @@ function toNodeListener(
   };
 }
 
+export interface Watcher {
+  start(): void;
+  stop(): void;
+}
+
+export interface Service {
+  server: Server;
+  watcher: Watcher;
+  /** Stops the wake watcher and closes the HTTP server. */
+  close(): Promise<void>;
+}
+
+/**
+ * Starts the HTTP server and the wake watcher that re-triggers queued
+ * deploys once the engineer wakes up.
+ */
+export function startService(
+  deps: ServerDeps,
+  options: { port: number; watcher?: Watcher; onListening?: () => void },
+): Service {
+  const watcher =
+    options.watcher ??
+    new WakeWatcher({
+      tracker: deps.sleepCache,
+      queue: deps.queue,
+      github: deps.github,
+      engineer: deps.engineer,
+      onDrain: (count) => {
+        if (count > 0) console.log(`Re-triggered ${count} queued deploy(s)`);
+      },
+    });
+
+  const server = createServer(toNodeListener(createHandler(deps)));
+  server.listen(options.port, options.onListening);
+  watcher.start();
+
+  return {
+    server,
+    watcher,
+    close: () =>
+      new Promise<void>((resolveClose, rejectClose) => {
+        watcher.stop();
+        server.close((err) => (err ? rejectClose(err) : resolveClose()));
+      }),
+  };
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -145,15 +193,19 @@ if (
     timeout_minutes: 480,
   };
 
-  const handler = createHandler({
-    sleepCache,
-    queue,
-    github,
-    gateConfig,
-    engineer: engineerName,
-  });
+  const service = startService(
+    { sleepCache, queue, github, gateConfig, engineer: engineerName },
+    {
+      port,
+      onListening: () => console.log(`Listening on http://localhost:${port}/`),
+    },
+  );
 
-  createServer(toNodeListener(handler)).listen(port, () => {
-    console.log(`Listening on http://localhost:${port}/`);
-  });
+  const shutdown = async () => {
+    await service.close();
+    queue.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }

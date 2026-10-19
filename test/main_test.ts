@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHandler, type ServerDeps } from "../src/main.ts";
+import { createHandler, startService, type ServerDeps } from "../src/main.ts";
+import { WakeWatcher } from "../src/sleep/watcher.ts";
 import type { SleepTracker } from "../src/sleep/tracker.ts";
 import type { SleepStatus } from "../src/sleep/types.ts";
 import { DeployQueue } from "../src/gate/queue.ts";
@@ -132,5 +133,35 @@ test("GET /unknown returns 404", async () => {
 
   const res = await handler(new Request("http://localhost/unknown"));
   assert.deepStrictEqual(res.status, 404);
+  deps.queue.close();
+});
+
+test("startService starts the wake watcher and stops it on close", async () => {
+  const tracker = new StubTracker();
+  const deps = makeDeps(tracker);
+  const calls: string[] = [];
+  const watcher = {
+    start: () => calls.push("start"),
+    stop: () => calls.push("stop"),
+  };
+
+  const service = startService(deps, { port: 0, watcher });
+  assert.deepStrictEqual(calls, ["start"]);
+
+  await service.close();
+  assert.deepStrictEqual(calls, ["start", "stop"]);
+  deps.queue.close();
+});
+
+test("startService creates a running WakeWatcher by default", async () => {
+  const tracker = new StubTracker();
+  const deps = makeDeps(tracker);
+
+  const service = startService(deps, { port: 0 });
+  assert.ok(service.watcher instanceof WakeWatcher);
+  assert.ok(service.watcher.isRunning());
+
+  await service.close();
+  assert.deepStrictEqual(service.watcher.isRunning(), false);
   deps.queue.close();
 });

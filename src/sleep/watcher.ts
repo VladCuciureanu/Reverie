@@ -75,7 +75,16 @@ export class WakeWatcher {
   }
 
   start(): void {
-    this.intervalId = setInterval(() => this.poll(), this.pollMs);
+    if (this.intervalId !== null) return;
+    this.intervalId = setInterval(() => {
+      this.poll().catch((err) =>
+        console.error("Wake watcher poll failed:", err),
+      );
+    }, this.pollMs);
+  }
+
+  isRunning(): boolean {
+    return this.intervalId !== null;
   }
 
   stop(): void {
