@@ -81,3 +81,37 @@ test("postCommitStatus returns false on failure", async () => {
   );
   assert.deepStrictEqual(result, false);
 });
+
+test("getWorkflowIdForRun returns the run's workflow_id", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const fetchFn = (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: input.toString(), init });
+    return Promise.resolve(
+      new Response(JSON.stringify({ id: 987654, workflow_id: 4242 }), {
+        status: 200,
+      }),
+    );
+  };
+  const client = new GitHubClient({
+    token: "gh-token",
+    fetchFn: fetchFn as typeof fetch,
+  });
+
+  const id = await client.getWorkflowIdForRun("org/repo", "987654");
+  assert.deepStrictEqual(id, "4242");
+  assert.deepStrictEqual(
+    calls[0].url,
+    "https://api.github.com/repos/org/repo/actions/runs/987654",
+  );
+  assert.deepStrictEqual(calls[0].init?.method, "GET");
+});
+
+test("getWorkflowIdForRun returns null on failure", async () => {
+  const { fetchFn } = capturingFetch(404);
+  const client = new GitHubClient({ token: "gh-token", fetchFn });
+
+  assert.deepStrictEqual(
+    await client.getWorkflowIdForRun("org/repo", "987654"),
+    null,
+  );
+});

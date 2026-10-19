@@ -53,9 +53,16 @@ export class WakeWatcher {
     let drained = 0;
 
     for (const deploy of deploys) {
-      const ok = await this.github.retriggerWorkflow(
+      // workflow_dispatch needs the workflow ID, not the run ID we queued.
+      const workflowId = await this.github.getWorkflowIdForRun(
         deploy.repo,
         deploy.workflow_run_id,
+      );
+      if (workflowId === null) continue;
+
+      const ok = await this.github.retriggerWorkflow(
+        deploy.repo,
+        workflowId,
         deploy.branch,
       );
       if (ok) {
