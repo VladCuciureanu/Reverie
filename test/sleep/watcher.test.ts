@@ -483,3 +483,45 @@ test("retries a failed dispatch once per poll while the gate stays open", async 
 
   queue.close();
 });
+
+test("a poll that overlaps an in-flight retry doesn't dispatch the deploy again", async () => {
+  const calls: Call[] = [];
+  const base = githubFetch(calls);
+  let release: (res: Response) => void = () => {};
+  const responses: (() => Promise<Response>)[] = [
+    () => Promise.resolve(new Response(null, { status: 500 })),
+    () => new Promise<Response>((resolve) => (release = resolve)),
+  ];
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) => {
+    if (!input.toString().endsWith("/dispatches")) return base(input, init);
+    calls.push({ url: input.toString(), method: init?.method ?? "GET" });
+    const next = responses.shift();
+    return next ? next() : Promise.resolve(new Response(null, { status: 204 }));
+  }) as typeof fetch;
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:");
+  const github = new GitHubClient({ token: "test", fetchFn });
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+
+  // The retry's dispatch hangs; the next tick fires before it settles.
+  const slow = watcher.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(dispatchCount(), 2);
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+
+  release(new Response(null, { status: 204 }));
+  assert.deepStrictEqual(await slow, 1);
+  assert.deepStrictEqual(queue.count(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+
+  queue.close();
+});

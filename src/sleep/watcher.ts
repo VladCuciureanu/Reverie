@@ -17,6 +17,8 @@ export class WakeWatcher {
   private wasBlocked = false;
   /** Whether the last drain left deploys queued because dispatching them failed. */
   private retryPending = false;
+  /** The poll still running, if any; start() doesn't wait for one before firing the next. */
+  private inFlight: Promise<number> | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private onDrain?: (count: number) => void;
   private timeoutMinutes?: number;
@@ -46,7 +48,22 @@ export class WakeWatcher {
     this.now = options.now ?? (() => new Date());
   }
 
+  /**
+   * Checks the gate and drains the queue if it opened. Returns 0 without doing
+   * anything while a previous poll is still running, so a slow drain can't
+   * overlap another one and dispatch the same deploy twice.
+   */
   async poll(): Promise<number> {
+    if (this.inFlight !== null) return 0;
+    this.inFlight = this.pollOnce();
+    try {
+      return await this.inFlight;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+
+  private async pollOnce(): Promise<number> {
     await this.expireStale();
 
     // "Waking up" means the gate goes from closed to open, by the same
