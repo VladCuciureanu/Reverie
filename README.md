@@ -18,7 +18,7 @@ The watcher only re-dispatches after it has itself seen the engineer in deep or 
 
 ```bash
 npm install
-OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(openssl rand -hex 32)" npm start
+REVERIE_ENGINEER=vlad OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(openssl rand -hex 32)" npm start
 ```
 
 | Variable | Required | Default | Description |
@@ -26,20 +26,20 @@ OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(openssl rand -hex 32)" npm 
 | `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on `POST /gate/check`. |
 | `OURA_TOKEN` | Yes | | Oura API personal access token |
 | `GITHUB_TOKEN` | Yes | | Used to post commit statuses and dispatch queued workflows |
-| `REVERIE_ENGINEER` | No | `engineer` from the config file, else `engineer` | Engineer the service gates on |
+| `REVERIE_ENGINEER` | If not in the config file | `engineer` from the config file | Engineer the service gates on. Takes precedence over the config file; the service exits if neither sets it. |
 | `REVERIE_CONFIG` | No | `.reverie.yml` | Path to the config file, relative to the working directory |
 | `REVERIE_DB` | No | `reverie.db` | SQLite database path |
 | `PORT` | No | `8000` | HTTP port, an integer from 0 to 65535 |
 
-If a required variable is unset or empty, `PORT` is not a valid port, or the config file is invalid, the service prints one line to stderr (for example `reverie: OURA_TOKEN must be set`) and exits with status 1 without starting.
+If a required variable is unset or empty, no engineer is set, `PORT` is not a valid port, or the config file is invalid, the service prints one line to stderr (for example `reverie: OURA_TOKEN must be set`) and exits with status 1 without starting.
 
 ### `.reverie.yml`
 
 Optional. If the file is missing, the gate defaults below apply; if it exists but is invalid, the service exits.
 
 ```yaml
-sleep_tracker: oura   # required; only oura is supported
-engineer: vlad        # required; REVERIE_ENGINEER takes precedence
+sleep_tracker: oura   # optional; only oura is supported
+engineer: vlad        # optional if REVERIE_ENGINEER is set, which takes precedence
 gate:
   block_on: [deep, rem]
   allow_on: [awake, light]
@@ -49,6 +49,8 @@ gate:
 
 | Key | Default | Description |
 |---|---|---|
+| `sleep_tracker` | `oura` | Sleep tracker to read. Any other value is a config error. |
+| `engineer` | | Engineer the service gates on, unless `REVERIE_ENGINEER` is set. |
 | `gate.block_on` | `[deep, rem]` | Stages that block deploys. Valid stages: `awake`, `light`, `deep`, `rem`. |
 | `gate.allow_on` | `[awake, light]` | Stages that allow deploys. `block_on` wins if a stage is in both. |
 | `gate.fallback` | `block` | `allow` or `block`; used when the stage is unknown or in neither list. Any other value is a config error. |

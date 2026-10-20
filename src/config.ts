@@ -10,8 +10,10 @@ export interface GateConfig {
 }
 
 export interface ReverieConfig {
-  sleep_tracker: string;
-  engineer: string;
+  /** Only Oura is supported; defaults to it when omitted. */
+  sleep_tracker: "oura";
+  /** Optional here because REVERIE_ENGINEER can set it instead. */
+  engineer?: string;
   gate: GateConfig;
 }
 
@@ -56,11 +58,11 @@ export function parseConfig(yaml: string): ReverieConfig {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid config: expected YAML object");
   }
-  if (typeof raw.sleep_tracker !== "string" || !raw.sleep_tracker) {
-    throw new Error("Missing required field: sleep_tracker");
+  if (raw.sleep_tracker !== undefined && raw.sleep_tracker !== "oura") {
+    throw new Error(`Unsupported sleep_tracker: ${raw.sleep_tracker} (only oura is supported)`);
   }
-  if (typeof raw.engineer !== "string" || !raw.engineer) {
-    throw new Error("Missing required field: engineer");
+  if (raw.engineer !== undefined && (typeof raw.engineer !== "string" || !raw.engineer)) {
+    throw new Error("Invalid engineer: expected a non-empty string");
   }
 
   const rawGate = (raw.gate ?? {}) as Record<string, unknown>;
@@ -77,7 +79,7 @@ export function parseConfig(yaml: string): ReverieConfig {
   };
 
   return {
-    sleep_tracker: raw.sleep_tracker,
+    sleep_tracker: "oura",
     engineer: raw.engineer,
     gate,
   };
@@ -127,10 +129,10 @@ export function loadSettings(env: NodeJS.ProcessEnv): Settings {
   } catch (err) {
     throw new Error(`Invalid config ${configPath}: ${(err as Error).message}`);
   }
-  if (config && config.sleep_tracker !== "oura") {
-    throw new Error(`Unsupported sleep_tracker: ${config.sleep_tracker}`);
+  const engineer = env.REVERIE_ENGINEER || config?.engineer;
+  if (!engineer) {
+    throw new Error(`No engineer set: set REVERIE_ENGINEER or engineer in ${configPath}`);
   }
-
   const apiToken = requireEnv(env, "REVERIE_API_TOKEN");
   const ouraToken = requireEnv(env, "OURA_TOKEN");
   const githubToken = requireEnv(env, "GITHUB_TOKEN");
@@ -142,7 +144,7 @@ export function loadSettings(env: NodeJS.ProcessEnv): Settings {
   }
 
   return {
-    engineer: env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer",
+    engineer,
     gate: config?.gate ?? DEFAULT_GATE,
     apiToken,
     ouraToken,
