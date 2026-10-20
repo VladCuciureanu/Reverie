@@ -6,7 +6,7 @@ Blocks production deploys while the on-call engineer is in deep or REM sleep, an
 
 Reverie has two parts: an HTTP service that reads the engineer's sleep stage from Oura and keeps a SQLite queue of blocked deploys, and a GitHub composite action that asks the service before each deploy. A blocked deploy fails its workflow run, gets a `pending` commit status, and is re-dispatched once the gate opens again: with the default settings, when the engineer moves from deep/REM to light sleep or awake.
 
-The watcher applies the same `gate` settings as `POST /gate/check`, and re-dispatches when one poll finds the gate closed (a `block_on` stage, or a stage the `fallback` blocks, including unknown with `fallback: block`) and the next finds it open. It only does so after it has itself seen the gate closed during the current process lifetime; if the service starts (or restarts) while the gate is already open, queued deploys stay queued until the gate next closes and reopens, or until they expire.
+The watcher applies the same `gate` settings as `POST /gate/check`, and re-dispatches when one poll finds the gate closed (a `block_on` stage, or a stage the `fallback` blocks, including unknown with `fallback: block`) and the next poll with a known stage finds it open. An unknown stage never counts as the gate opening, even with `fallback: allow`. The watcher only re-dispatches after it has itself seen the gate closed during the current process lifetime; if the service starts (or restarts) while the gate is already open, queued deploys stay queued until the gate next closes and reopens, or until they expire.
 
 ## Requirements
 

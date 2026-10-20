@@ -51,6 +51,14 @@ export class WakeWatcher {
     // rules /gate/check uses to block deploys.
     const status = await this.tracker.getStatus(this.engineer);
     const blocked = !checkGate(status, this.gate).allowed;
+
+    // An unknown stage (e.g. a failed Oura read) can close the gate when the
+    // fallback blocks, but it never counts as waking up, whatever the fallback.
+    if (status === null) {
+      this.wasBlocked ||= blocked;
+      return 0;
+    }
+
     const woke = this.wasBlocked && !blocked;
     this.wasBlocked = blocked;
 

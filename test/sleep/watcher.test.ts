@@ -280,3 +280,62 @@ test("drains when the stage becomes known again after an unknown poll blocked", 
 
   queue.close();
 });
+
+test("an unknown stage never counts as waking, even with fallback: allow", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls);
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    gate: {
+      block_on: ["deep", "rem"],
+      allow_on: ["awake", "light"],
+      fallback: "allow",
+      timeout_minutes: 480,
+    },
+  });
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  // The Oura read fails: the gate allows by fallback, but that isn't a wake.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.ok(!calls.some((c) => c.url.endsWith("/dispatches")));
+
+  // Still asleep once the stage is known again: no wake.
+  tracker.status = { state: "rem", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  // A known allowed stage after the unknown poll still counts as waking.
+  tracker.status = null;
+  await watcher.poll();
+  tracker.status = { state: "light", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+  assert.deepStrictEqual(queue.count(), 0);
+
+  queue.close();
+});
+
+test("an unknown stage that blocks still closes the gate for the next wake", async () => {
+  const { tracker, queue, github } = setup();
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  tracker.status = { state: "awake", since: new Date() };
+  await watcher.poll();
+
+  // Unknown blocks under the default fallback: block, so deploys queue up.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+
+  queue.close();
+});
