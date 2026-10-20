@@ -94,3 +94,62 @@ export function loadConfig(path: string): ReverieConfig | null {
   }
   return parseConfig(text);
 }
+
+/** Everything the service needs at startup, from the environment and the config file. */
+export interface Settings {
+  engineer: string;
+  gate: GateConfig;
+  apiToken: string;
+  ouraToken: string;
+  githubToken: string;
+  port: number;
+  dbPath: string;
+  configPath: string;
+  /** False when there is no config file and the defaults apply. */
+  configFound: boolean;
+}
+
+function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
+  const value = env[name];
+  if (!value) throw new Error(`${name} must be set`);
+  return value;
+}
+
+/**
+ * Reads the service settings. Throws an Error with a one-line message when
+ * the config file is invalid or a required variable is missing or malformed.
+ */
+export function loadSettings(env: NodeJS.ProcessEnv): Settings {
+  const configPath = env.REVERIE_CONFIG ?? ".reverie.yml";
+  let config: ReverieConfig | null;
+  try {
+    config = loadConfig(configPath);
+  } catch (err) {
+    throw new Error(`Invalid config ${configPath}: ${(err as Error).message}`);
+  }
+  if (config && config.sleep_tracker !== "oura") {
+    throw new Error(`Unsupported sleep_tracker: ${config.sleep_tracker}`);
+  }
+
+  const apiToken = requireEnv(env, "REVERIE_API_TOKEN");
+  const ouraToken = requireEnv(env, "OURA_TOKEN");
+  const githubToken = requireEnv(env, "GITHUB_TOKEN");
+
+  const rawPort = env.PORT ?? "8000";
+  const port = Number(rawPort);
+  if (!/^\d+$/.test(rawPort) || port > 65535) {
+    throw new Error(`PORT must be an integer from 0 to 65535, got "${rawPort}"`);
+  }
+
+  return {
+    engineer: env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer",
+    gate: config?.gate ?? DEFAULT_GATE,
+    apiToken,
+    ouraToken,
+    githubToken,
+    port,
+    dbPath: env.REVERIE_DB ?? "reverie.db",
+    configPath,
+    configFound: config !== null,
+  };
+}

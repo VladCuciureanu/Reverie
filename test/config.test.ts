@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_GATE, loadConfig, parseConfig } from "../src/config.ts";
+import { DEFAULT_GATE, loadConfig, loadSettings, parseConfig } from "../src/config.ts";
 
 test("parses valid full config", () => {
   const yaml = `
@@ -115,4 +115,43 @@ test("loadConfig throws on an invalid file", (t) => {
   assert.throws(() => loadConfig(path), {
     message: "Missing required field: sleep_tracker",
   });
+});
+
+/** A complete environment whose config path doesn't exist, so the defaults apply. */
+function baseEnv(t: { after: (fn: () => void) => void }): NodeJS.ProcessEnv {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return {
+    REVERIE_CONFIG: join(dir, "missing.yml"),
+    REVERIE_API_TOKEN: "api",
+    OURA_TOKEN: "oura",
+    GITHUB_TOKEN: "gh",
+    REVERIE_ENGINEER: "vlad",
+  };
+}
+
+test("loadSettings reads a complete environment", (t) => {
+  const settings = loadSettings({ ...baseEnv(t), PORT: "9000", REVERIE_DB: "x.db" });
+  assert.deepStrictEqual(settings.port, 9000);
+  assert.deepStrictEqual(settings.dbPath, "x.db");
+  assert.deepStrictEqual(settings.engineer, "vlad");
+  assert.deepStrictEqual(settings.gate, DEFAULT_GATE);
+  assert.deepStrictEqual(settings.configFound, false);
+});
+
+test("loadSettings requires OURA_TOKEN, GITHUB_TOKEN and REVERIE_API_TOKEN", (t) => {
+  for (const name of ["OURA_TOKEN", "GITHUB_TOKEN", "REVERIE_API_TOKEN"]) {
+    for (const value of [undefined, ""]) {
+      const env = { ...baseEnv(t), [name]: value };
+      assert.throws(() => loadSettings(env), { message: `${name} must be set` });
+    }
+  }
+});
+
+test("loadSettings rejects a PORT that isn't a valid port number", (t) => {
+  for (const port of ["abc", "", "80.5", "-1", "65536", "8000x"]) {
+    assert.throws(() => loadSettings({ ...baseEnv(t), PORT: port }), {
+      message: `PORT must be an integer from 0 to 65535, got "${port}"`,
+    });
+  }
 });

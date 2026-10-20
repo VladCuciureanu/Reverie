@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { DeployQueue } from "../src/gate/queue.ts";
 import { GitHubClient } from "../src/github/workflow.ts";
 import { createHandler, type ServerDeps, startService } from "../src/main.ts";
@@ -316,4 +321,23 @@ test("POST /webhook/sleep is not served", async () => {
   );
   assert.deepStrictEqual(res.status, 404);
   deps.queue.close();
+});
+
+test("the service exits 1 with a one-line error when a required variable is missing", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const main = fileURLToPath(new URL("../src/main.ts", import.meta.url));
+  const result = spawnSync(process.execPath, [main], {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 10_000,
+    env: {
+      REVERIE_API_TOKEN: "api",
+      GITHUB_TOKEN: "gh",
+      REVERIE_ENGINEER: "vlad",
+      PORT: "0",
+    },
+  });
+  assert.deepStrictEqual(result.status, 1);
+  assert.deepStrictEqual(result.stderr, "reverie: OURA_TOKEN must be set\n");
 });

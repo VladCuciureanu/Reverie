@@ -23,13 +23,15 @@ OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(openssl rand -hex 32)" npm 
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on `POST /gate/check`. The service exits if it is unset. |
+| `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on `POST /gate/check`. |
 | `OURA_TOKEN` | Yes | | Oura API personal access token |
 | `GITHUB_TOKEN` | Yes | | Used to post commit statuses and dispatch queued workflows |
 | `REVERIE_ENGINEER` | No | `engineer` from the config file, else `engineer` | Engineer the service gates on |
 | `REVERIE_CONFIG` | No | `.reverie.yml` | Path to the config file, relative to the working directory |
 | `REVERIE_DB` | No | `reverie.db` | SQLite database path |
-| `PORT` | No | `8000` | HTTP port |
+| `PORT` | No | `8000` | HTTP port, an integer from 0 to 65535 |
+
+If a required variable is unset or empty, `PORT` is not a valid port, or the config file is invalid, the service prints one line to stderr (for example `reverie: OURA_TOKEN must be set`) and exits with status 1 without starting.
 
 ### `.reverie.yml`
 

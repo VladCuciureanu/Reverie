@@ -3,8 +3,8 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import process from "node:process";
 import { Readable } from "node:stream";
-import type { GateConfig, ReverieConfig } from "./config.ts";
-import { DEFAULT_GATE, loadConfig } from "./config.ts";
+import type { GateConfig, Settings } from "./config.ts";
+import { loadSettings } from "./config.ts";
 import { checkGate } from "./gate/gate.ts";
 import { DeployQueue } from "./gate/queue.ts";
 import { GitHubClient } from "./github/workflow.ts";
@@ -222,52 +222,36 @@ export function startService(
   };
 }
 
-if (import.meta.main) {
-  const configPath = process.env.REVERIE_CONFIG ?? ".reverie.yml";
-  let config: ReverieConfig | null;
+function main(): void {
+  let settings: Settings;
   try {
-    config = loadConfig(configPath);
+    settings = loadSettings(process.env);
   } catch (err) {
-    console.error(`Invalid config ${configPath}: ${(err as Error).message}`);
-    process.exit(1);
+    console.error(`reverie: ${(err as Error).message}`);
+    process.exitCode = 1;
+    return;
   }
-  if (!config) {
-    console.log(`No config at ${configPath}; using default gate settings`);
-  } else if (config.sleep_tracker !== "oura") {
-    console.error(`Unsupported sleep_tracker: ${config.sleep_tracker}`);
-    process.exit(1);
+  if (!settings.configFound) {
+    console.log(`No config at ${settings.configPath}; using default gate settings`);
   }
 
-  const ouraToken = process.env.OURA_TOKEN ?? "";
-  const ghToken = process.env.GITHUB_TOKEN ?? "";
-  const engineerName = process.env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer";
-  const port = Number(process.env.PORT ?? "8000");
-  const dbPath = process.env.REVERIE_DB ?? "reverie.db";
-  const apiToken = process.env.REVERIE_API_TOKEN ?? "";
-  if (!apiToken) {
-    console.error("REVERIE_API_TOKEN must be set");
-    process.exit(1);
-  }
-
-  const tracker = new OuraTracker({ token: ouraToken });
+  const tracker = new OuraTracker({ token: settings.ouraToken });
   const sleepCache = new SleepStateCache(tracker);
-  const queue = new DeployQueue(dbPath);
-  const github = new GitHubClient({ token: ghToken });
-
-  const gateConfig: GateConfig = config?.gate ?? DEFAULT_GATE;
+  const queue = new DeployQueue(settings.dbPath);
+  const github = new GitHubClient({ token: settings.githubToken });
 
   const service = startService(
     {
       sleepCache,
       queue,
       github,
-      gateConfig,
-      engineer: engineerName,
-      apiToken,
+      gateConfig: settings.gate,
+      engineer: settings.engineer,
+      apiToken: settings.apiToken,
     },
     {
-      port,
-      onListening: () => console.log(`Listening on http://localhost:${port}/`),
+      port: settings.port,
+      onListening: () => console.log(`Listening on http://localhost:${settings.port}/`),
     },
   );
 
@@ -279,3 +263,5 @@ if (import.meta.main) {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 }
+
+if (import.meta.main) main();
