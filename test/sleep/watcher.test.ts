@@ -565,3 +565,37 @@ test("a poll that overlaps an in-flight retry doesn't dispatch the deploy again"
 
   queue.close();
 });
+
+test("an unknown stage doesn't retry a failed dispatch, even with fallback: allow", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 200, 500);
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    gate: {
+      block_on: ["deep", "rem"],
+      allow_on: ["awake", "light"],
+      fallback: "allow",
+      timeout_minutes: 480,
+    },
+  });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 1);
+
+  // A retry is pending, but the stage is unknown: no dispatch.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 1);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  queue.close();
+});
