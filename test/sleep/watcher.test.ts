@@ -154,7 +154,7 @@ test("dispatches the run's workflow ID, not the run ID", async () => {
   queue.close();
 });
 
-test("keeps deploy queued when the run's workflow can't be resolved", async () => {
+test("drops a deploy and fails its status when the queued run no longer exists", async () => {
   const calls: Call[] = [];
   const { tracker, queue, github } = setup(calls, 404);
   const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
@@ -165,10 +165,50 @@ test("keeps deploy queued when the run's workflow can't be resolved", async () =
 
   tracker.status = { state: "awake", since: new Date() };
   assert.deepStrictEqual(await watcher.poll(), 0);
-  assert.deepStrictEqual(queue.count(), 1);
+  assert.deepStrictEqual(queue.count(), 0);
   assert.ok(!calls.some((c) => c.url.endsWith("/dispatches")));
+  const statuses = calls.filter((c) => c.url.includes("/statuses/"));
+  assert.deepStrictEqual(statuses.length, 1);
+  assert.deepStrictEqual(statuses[0].url, "https://api.github.com/repos/org/repo/statuses/abc123");
+  const body = JSON.parse(statuses[0].body ?? "");
+  assert.deepStrictEqual(body.state, "failure");
+  assert.match(body.description, /run 987654 .*not found/i);
+
+  // Not retried on later polls.
+  const lookups = calls.filter((c) => c.url.includes("/actions/runs/")).length;
+  await watcher.poll();
+  assert.deepStrictEqual(calls.filter((c) => c.url.includes("/actions/runs/")).length, lookups);
 
   queue.close();
+});
+
+test("keeps deploy queued and retries when the run lookup fails with a server error", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 503);
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const lookups = () => calls.filter((c) => c.url.includes("/actions/runs/")).length;
+
+  const errors: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    tracker.status = { state: "rem", since: new Date() };
+    await watcher.poll();
+    queue.enqueue("org/repo", "main", "abc123", "987654");
+
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(queue.count(), 1);
+    assert.deepStrictEqual(lookups(), 1);
+    assert.ok(!calls.some((c) => c.url.includes("/statuses/")));
+
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(lookups(), 2);
+    assert.deepStrictEqual(queue.count(), 1);
+  } finally {
+    console.error = originalError;
+    queue.close();
+  }
 });
 
 test("keeps deploy queued and posts no success status when the dispatch fails", async () => {

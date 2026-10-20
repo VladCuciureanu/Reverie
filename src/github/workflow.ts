@@ -31,7 +31,9 @@ export class GitHubClient {
 
   /**
    * Looks up the workflow that produced a run. Returns the workflow ID
-   * (usable with the workflow_dispatch API), or null if the run can't be read.
+   * (usable with the workflow_dispatch API), or null if the run doesn't exist
+   * (404) or has no workflow ID. Throws on any other error response, which
+   * may be transient (5xx, rate limits) or fixable (token permissions).
    */
   async getWorkflowIdForRun(repo: string, runId: string): Promise<string | null> {
     const url = `${this.baseUrl}/repos/${repo}/actions/runs/${runId}`;
@@ -42,7 +44,10 @@ export class GitHubClient {
         Accept: "application/vnd.github+json",
       },
     });
-    if (response.status !== 200) return null;
+    if (response.status === 404) return null;
+    if (response.status !== 200) {
+      throw new Error(`GitHub returned ${response.status} looking up run ${runId} in ${repo}`);
+    }
 
     const run = (await response.json()) as { workflow_id?: unknown };
     return typeof run.workflow_id === "number" || typeof run.workflow_id === "string"

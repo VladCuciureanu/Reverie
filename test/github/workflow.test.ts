@@ -78,11 +78,20 @@ test("getWorkflowIdForRun returns the run's workflow_id", async () => {
   assert.deepStrictEqual(calls[0].init?.method, "GET");
 });
 
-test("getWorkflowIdForRun returns null on failure", async () => {
+test("getWorkflowIdForRun returns null when the run doesn't exist", async () => {
   const { fetchFn } = capturingFetch(404);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
   assert.deepStrictEqual(await client.getWorkflowIdForRun("org/repo", "987654"), null);
+});
+
+test("getWorkflowIdForRun throws on other error responses", async () => {
+  for (const status of [401, 403, 429, 500, 503]) {
+    const { fetchFn } = capturingFetch(status);
+    const client = new GitHubClient({ token: "gh-token", fetchFn });
+
+    await assert.rejects(client.getWorkflowIdForRun("org/repo", "987654"), new RegExp(`${status}`));
+  }
 });
 
 test("GitHub requests time out instead of hanging", async () => {

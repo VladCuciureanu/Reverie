@@ -15,7 +15,7 @@ export class WakeWatcher {
   private gate: GateConfig;
   /** Whether the gate was closed at the previous poll. */
   private wasBlocked = false;
-  /** Whether the last drain left deploys queued because dispatching them failed. */
+  /** Whether the last drain left deploys queued because dispatching them failed transiently. */
   private retryPending = false;
   /** The poll still running, if any; start() doesn't wait for one before firing the next. */
   private inFlight: Promise<number> | null = null;
@@ -107,9 +107,29 @@ export class WakeWatcher {
   private async drainQueue(): Promise<number> {
     const deploys = this.queue.peek();
     let drained = 0;
+    let retry = false;
 
     for (const deploy of deploys) {
-      if (!(await this.dispatch(deploy))) continue;
+      const result = await this.dispatch(deploy);
+      if (result === "retry") {
+        retry = true;
+        continue;
+      }
+      if (result === "gone") {
+        // The run was deleted (or never existed): retrying can't help.
+        this.queue.remove(deploy.id);
+        try {
+          await this.github.postCommitStatus(
+            deploy.repo,
+            deploy.sha,
+            "failure",
+            `Deploy dropped: workflow run ${deploy.workflow_run_id} was not found, so it can't be re-run.`,
+          );
+        } catch (err) {
+          console.error("Failed to post dropped-deploy commit status:", err);
+        }
+        continue;
+      }
 
       // Dequeue as soon as the dispatch succeeds, so a failed status post
       // can't get the deploy dispatched again on the next wake.
@@ -127,21 +147,25 @@ export class WakeWatcher {
       }
     }
 
-    this.retryPending = drained < deploys.length;
+    this.retryPending = retry;
     this.onDrain?.(drained);
     return drained;
   }
 
-  /** Re-dispatches a deploy's workflow; false (deploy stays queued) on any failure. */
-  private async dispatch(deploy: QueuedDeploy): Promise<boolean> {
+  /**
+   * Re-dispatches a deploy's workflow. "gone" means its run can't be found, so
+   * it can never be dispatched; "retry" covers every other failure.
+   */
+  private async dispatch(deploy: QueuedDeploy): Promise<"dispatched" | "gone" | "retry"> {
     try {
       // workflow_dispatch needs the workflow ID, not the run ID we queued.
       const workflowId = await this.github.getWorkflowIdForRun(deploy.repo, deploy.workflow_run_id);
-      if (workflowId === null) return false;
-      return await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
+      if (workflowId === null) return "gone";
+      const ok = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
+      return ok ? "dispatched" : "retry";
     } catch (err) {
       console.error(`Failed to re-trigger queued deploy for ${deploy.repo}@${deploy.branch}:`, err);
-      return false;
+      return "retry";
     }
   }
 
