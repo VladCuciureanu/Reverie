@@ -4,6 +4,9 @@ inputs:
   reverie_url:
     description: "URL of the Reverie service"
     required: true
+  reverie_token:
+    description: "Shared API token for the Reverie service (REVERIE_API_TOKEN)"
+    required: true
   engineer:
     description: "Engineer identifier"
     required: true
@@ -18,10 +21,11 @@ runs:
       shell: bash
       env:
         INPUT_REVERIE_URL: ${{ inputs.reverie_url }}
+        INPUT_REVERIE_TOKEN: ${{ inputs.reverie_token }}
         INPUT_ENGINEER: ${{ inputs.engineer }}
         INPUT_OVERRIDE_BY: ${{ inputs.override_by }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_REF_NAME: ${{ github.ref_name }}
         GITHUB_SHA: ${{ github.sha }}
         GITHUB_RUN_ID: ${{ github.run_id }}
-      run: deno run --allow-net --allow-env src/github/action.ts
+      run: node "${{ github.action_path }}/src/github/action.ts"

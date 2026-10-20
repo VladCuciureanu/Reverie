@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { checkGate } from "../../src/gate/gate.ts";
 import type { GateConfig } from "../../src/config.ts";
 import type { SleepStatus } from "../../src/sleep/types.ts";
@@ -10,65 +11,96 @@ const defaultGate: GateConfig = {
   timeout_minutes: 480,
 };
 
-Deno.test("allows deploy when engineer is awake", () => {
+test("allows deploy when engineer is awake", () => {
   const status: SleepStatus = {
     state: "awake",
     since: new Date("2026-03-24T08:00:00Z"),
   };
   const result = checkGate(status, defaultGate);
-  assertEquals(result.allowed, true);
-  assertEquals(result.sleep_state, "awake");
+  assert.deepStrictEqual(result.allowed, true);
+  assert.deepStrictEqual(result.sleep_state, "awake");
 });
 
-Deno.test("allows deploy when engineer is in light sleep", () => {
+test("allows deploy when engineer is in light sleep", () => {
   const status: SleepStatus = {
     state: "light",
     since: new Date("2026-03-24T01:00:00Z"),
   };
   const result = checkGate(status, defaultGate);
-  assertEquals(result.allowed, true);
+  assert.deepStrictEqual(result.allowed, true);
 });
 
-Deno.test("blocks deploy when engineer is in deep sleep", () => {
+test("blocks deploy when engineer is in deep sleep", () => {
   const status: SleepStatus = {
     state: "deep",
     since: new Date("2026-03-24T02:00:00Z"),
   };
   const result = checkGate(status, defaultGate);
-  assertEquals(result.allowed, false);
-  assertEquals(result.sleep_state, "deep");
-  assertEquals(result.reason, "Engineer is in DEEP sleep.");
+  assert.deepStrictEqual(result.allowed, false);
+  assert.deepStrictEqual(result.sleep_state, "deep");
+  assert.deepStrictEqual(result.reason, "Engineer is in DEEP sleep.");
 });
 
-Deno.test("blocks deploy when engineer is in REM", () => {
+test("blocks deploy when engineer is in REM", () => {
   const status: SleepStatus = {
     state: "rem",
     since: new Date("2026-03-24T03:00:00Z"),
   };
   const result = checkGate(status, defaultGate);
-  assertEquals(result.allowed, false);
-  assertEquals(result.reason, "Engineer is in REM sleep.");
+  assert.deepStrictEqual(result.allowed, false);
+  assert.deepStrictEqual(result.reason, "Engineer is in REM sleep.");
 });
 
-Deno.test("blocks when status unknown and fallback is block", () => {
+test("blocks when status unknown and fallback is block", () => {
   const result = checkGate(null, defaultGate);
-  assertEquals(result.allowed, false);
-  assertEquals(result.sleep_state, "unknown");
+  assert.deepStrictEqual(result.allowed, false);
+  assert.deepStrictEqual(result.sleep_state, "unknown");
 });
 
-Deno.test("allows when status unknown and fallback is allow", () => {
+test("allows when status unknown and fallback is allow", () => {
   const gate = { ...defaultGate, fallback: "allow" as const };
   const result = checkGate(null, gate);
-  assertEquals(result.allowed, true);
-  assertEquals(result.sleep_state, "unknown");
+  assert.deepStrictEqual(result.allowed, true);
+  assert.deepStrictEqual(result.sleep_state, "unknown");
 });
 
-Deno.test("override bypasses gate even during REM", () => {
+test("override bypasses gate even during REM", () => {
   const status: SleepStatus = {
     state: "rem",
     since: new Date("2026-03-24T03:00:00Z"),
   };
   const result = checkGate(status, defaultGate, "alice");
-  assertEquals(result.allowed, true);
-  assertEquals(result.reason, "Gate overridden by alice.");
+  assert.deepStrictEqual(result.allowed, true);
+  assert.deepStrictEqual(result.reason, "Gate overridden by alice.");
+});
+
+test("applies fallback to states in neither block_on nor allow_on", () => {
+  const status: SleepStatus = {
+    state: "light",
+    since: new Date("2026-03-24T01:00:00Z"),
+  };
+  const gate: GateConfig = {
+    ...defaultGate,
+    block_on: ["deep"],
+    allow_on: ["awake"],
+  };
+  const blocked = checkGate(status, gate);
+  assert.deepStrictEqual(blocked.allowed, false);
+  assert.deepStrictEqual(blocked.sleep_state, "light");
+
+  const allowed = checkGate(status, { ...gate, fallback: "allow" });
+  assert.deepStrictEqual(allowed.allowed, true);
+});
+
+test("block_on wins over allow_on", () => {
+  const status: SleepStatus = {
+    state: "light",
+    since: new Date("2026-03-24T01:00:00Z"),
+  };
+  const gate: GateConfig = {
+    ...defaultGate,
+    block_on: ["light"],
+    allow_on: ["light"],
+  };
+  assert.deepStrictEqual(checkGate(status, gate).allowed, false);
 });

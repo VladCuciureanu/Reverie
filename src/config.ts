@@ -1,4 +1,5 @@
-import { parse as parseYaml } from "@std/yaml";
+import { readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 import type { SleepState } from "./sleep/types.ts";
 
 export interface GateConfig {
@@ -16,7 +17,7 @@ export interface ReverieConfig {
 
 const VALID_SLEEP_STATES: SleepState[] = ["awake", "light", "deep", "rem"];
 
-const DEFAULT_GATE: GateConfig = {
+export const DEFAULT_GATE: GateConfig = {
   block_on: ["deep", "rem"],
   allow_on: ["awake", "light"],
   fallback: "block",
@@ -58,9 +59,10 @@ export function parseConfig(yaml: string): ReverieConfig {
       ? validateSleepStates(rawGate.allow_on)
       : DEFAULT_GATE.allow_on,
     fallback: rawGate.fallback === "allow" ? "allow" : DEFAULT_GATE.fallback,
-    timeout_minutes: typeof rawGate.timeout_minutes === "number"
-      ? rawGate.timeout_minutes
-      : DEFAULT_GATE.timeout_minutes,
+    timeout_minutes:
+      typeof rawGate.timeout_minutes === "number"
+        ? rawGate.timeout_minutes
+        : DEFAULT_GATE.timeout_minutes,
   };
 
   return {
@@ -68,4 +70,16 @@ export function parseConfig(yaml: string): ReverieConfig {
     engineer: raw.engineer,
     gate,
   };
+}
+
+/** Reads and parses a config file. Returns null if the file doesn't exist. */
+export function loadConfig(path: string): ReverieConfig | null {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  return parseConfig(text);
 }

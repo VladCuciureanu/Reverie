@@ -1,9 +1,11 @@
-import { assertEquals } from "@std/assert";
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { GitHubClient } from "../../src/github/workflow.ts";
 
-function capturingFetch(
-  status: number,
-): { fetchFn: typeof fetch; calls: { url: string; init: RequestInit }[] } {
+function capturingFetch(status: number): {
+  fetchFn: typeof fetch;
+  calls: { url: string; init: RequestInit }[];
+} {
   const calls: { url: string; init: RequestInit }[] = [];
   const fetchFn = (input: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: input.toString(), init: init! });
@@ -12,7 +14,7 @@ function capturingFetch(
   return { fetchFn: fetchFn as typeof fetch, calls };
 }
 
-Deno.test("retriggerWorkflow sends dispatch request", async () => {
+test("retriggerWorkflow sends dispatch request", async () => {
   const { fetchFn, calls } = capturingFetch(204);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
@@ -21,19 +23,19 @@ Deno.test("retriggerWorkflow sends dispatch request", async () => {
     "deploy.yml",
     "main",
   );
-  assertEquals(result, true);
-  assertEquals(calls.length, 1);
-  assertEquals(
+  assert.deepStrictEqual(result, true);
+  assert.deepStrictEqual(calls.length, 1);
+  assert.deepStrictEqual(
     calls[0].url,
     "https://api.github.com/repos/org/repo/actions/workflows/deploy.yml/dispatches",
   );
-  assertEquals(calls[0].init.method, "POST");
+  assert.deepStrictEqual(calls[0].init.method, "POST");
 
   const body = JSON.parse(calls[0].init.body as string);
-  assertEquals(body.ref, "main");
+  assert.deepStrictEqual(body.ref, "main");
 });
 
-Deno.test("retriggerWorkflow returns false on failure", async () => {
+test("retriggerWorkflow returns false on failure", async () => {
   const { fetchFn } = capturingFetch(403);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
@@ -42,10 +44,10 @@ Deno.test("retriggerWorkflow returns false on failure", async () => {
     "deploy.yml",
     "main",
   );
-  assertEquals(result, false);
+  assert.deepStrictEqual(result, false);
 });
 
-Deno.test("postCommitStatus sends status request", async () => {
+test("postCommitStatus sends status request", async () => {
   const { fetchFn, calls } = capturingFetch(201);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
@@ -55,19 +57,19 @@ Deno.test("postCommitStatus sends status request", async () => {
     "pending",
     "Deploy queued: engineer is in REM sleep.",
   );
-  assertEquals(result, true);
-  assertEquals(calls.length, 1);
-  assertEquals(
+  assert.deepStrictEqual(result, true);
+  assert.deepStrictEqual(calls.length, 1);
+  assert.deepStrictEqual(
     calls[0].url,
     "https://api.github.com/repos/org/repo/statuses/abc123",
   );
 
   const body = JSON.parse(calls[0].init.body as string);
-  assertEquals(body.state, "pending");
-  assertEquals(body.context, "reverie/gate");
+  assert.deepStrictEqual(body.state, "pending");
+  assert.deepStrictEqual(body.context, "reverie/gate");
 });
 
-Deno.test("postCommitStatus returns false on failure", async () => {
+test("postCommitStatus returns false on failure", async () => {
   const { fetchFn } = capturingFetch(403);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
@@ -77,5 +79,39 @@ Deno.test("postCommitStatus returns false on failure", async () => {
     "pending",
     "test",
   );
-  assertEquals(result, false);
+  assert.deepStrictEqual(result, false);
+});
+
+test("getWorkflowIdForRun returns the run's workflow_id", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const fetchFn = (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: input.toString(), init });
+    return Promise.resolve(
+      new Response(JSON.stringify({ id: 987654, workflow_id: 4242 }), {
+        status: 200,
+      }),
+    );
+  };
+  const client = new GitHubClient({
+    token: "gh-token",
+    fetchFn: fetchFn as typeof fetch,
+  });
+
+  const id = await client.getWorkflowIdForRun("org/repo", "987654");
+  assert.deepStrictEqual(id, "4242");
+  assert.deepStrictEqual(
+    calls[0].url,
+    "https://api.github.com/repos/org/repo/actions/runs/987654",
+  );
+  assert.deepStrictEqual(calls[0].init?.method, "GET");
+});
+
+test("getWorkflowIdForRun returns null on failure", async () => {
+  const { fetchFn } = capturingFetch(404);
+  const client = new GitHubClient({ token: "gh-token", fetchFn });
+
+  assert.deepStrictEqual(
+    await client.getWorkflowIdForRun("org/repo", "987654"),
+    null,
+  );
 });
