@@ -21,6 +21,10 @@ export interface ActionResult {
   exitCode: number;
 }
 
+function failure(reason: string, sleepState = "unknown"): ActionResult {
+  return { allowed: false, reason, sleep_state: sleepState, exitCode: 1 };
+}
+
 export async function runAction(
   inputs: ActionInputs,
   fetchFn: typeof fetch = fetch,
@@ -30,26 +34,51 @@ export async function runAction(
     branch: inputs.branch,
     sha: inputs.sha,
     workflow_run_id: inputs.workflowRunId,
+    engineer: inputs.engineer || undefined,
     override_by: inputs.overrideBy || undefined,
   };
 
-  const response = await fetchFn(`${inputs.reverieUrl}/gate/check`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${inputs.token}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetchFn(`${inputs.reverieUrl}/gate/check`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${inputs.token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    text = await response.text();
+  } catch (err) {
+    return failure(`Could not reach Reverie: ${(err as Error).message}`);
+  }
 
-  const result = await response.json();
+  let result: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) throw new Error();
+    result = parsed as Record<string, unknown>;
+  } catch {
+    return failure(
+      `Reverie returned HTTP ${response.status} with a non-JSON body`,
+    );
+  }
 
-  return {
-    allowed: result.allowed,
-    reason: result.reason ?? result.error,
-    sleep_state: result.sleep_state,
-    exitCode: result.allowed === true ? 0 : 1,
-  };
+  const reason =
+    typeof result.reason === "string"
+      ? result.reason
+      : typeof result.error === "string"
+        ? result.error
+        : `Reverie returned HTTP ${response.status}`;
+  const sleepState =
+    typeof result.sleep_state === "string" ? result.sleep_state : "unknown";
+
+  // 200 means allowed, 423 means blocked; any other status is an error.
+  if (response.ok && result.allowed === true) {
+    return { allowed: true, reason, sleep_state: sleepState, exitCode: 0 };
+  }
+  return failure(reason, sleepState);
 }
 
 if (

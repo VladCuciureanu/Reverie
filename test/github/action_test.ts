@@ -102,3 +102,44 @@ test("action fails when the service rejects the request", async () => {
   assert.deepStrictEqual(result.exitCode, 1);
   assert.deepStrictEqual(result.reason, "Unauthorized");
 });
+
+test("action sends the engineer", async () => {
+  let capturedBody = "";
+  const fetchFn = (_input: string | URL | Request, init?: RequestInit) => {
+    capturedBody = init?.body as string;
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ allowed: true, reason: "ok", sleep_state: "awake" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  };
+
+  await runAction(baseInputs, fetchFn as typeof fetch);
+  assert.deepStrictEqual(JSON.parse(capturedBody).engineer, "vlad");
+});
+
+test("action fails on an error status even if the body says allowed", async () => {
+  const result = await runAction(baseInputs, mockFetch({ allowed: true }, 500));
+  assert.deepStrictEqual(result.exitCode, 1);
+  assert.deepStrictEqual(result.allowed, false);
+});
+
+test("action fails cleanly on a non-JSON response", async () => {
+  const fetchFn = (() =>
+    Promise.resolve(
+      new Response("<html>Bad Gateway</html>", { status: 502 }),
+    )) as typeof fetch;
+  const result = await runAction(baseInputs, fetchFn);
+  assert.deepStrictEqual(result.exitCode, 1);
+  assert.deepStrictEqual(result.allowed, false);
+  assert.match(result.reason, /HTTP 502/);
+});
+
+test("action fails cleanly when the service is unreachable", async () => {
+  const fetchFn = (() =>
+    Promise.reject(new TypeError("fetch failed"))) as typeof fetch;
+  const result = await runAction(baseInputs, fetchFn);
+  assert.deepStrictEqual(result.exitCode, 1);
+  assert.match(result.reason, /fetch failed/);
+});
