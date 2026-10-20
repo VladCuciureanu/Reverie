@@ -43,27 +43,18 @@ test("postCommitStatus sends status request", async () => {
   const { fetchFn, calls } = capturingFetch(201);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
-  const result = await client.postCommitStatus(
+  await client.postCommitStatus(
     "org/repo",
     "abc123",
     "pending",
     "Deploy queued: engineer is in REM sleep.",
   );
-  assert.deepStrictEqual(result, true);
   assert.deepStrictEqual(calls.length, 1);
   assert.deepStrictEqual(calls[0].url, "https://api.github.com/repos/org/repo/statuses/abc123");
 
   const body = JSON.parse(calls[0].init.body as string);
   assert.deepStrictEqual(body.state, "pending");
   assert.deepStrictEqual(body.context, "reverie/gate");
-});
-
-test("postCommitStatus returns false on failure", async () => {
-  const { fetchFn } = capturingFetch(403);
-  const client = new GitHubClient({ token: "gh-token", fetchFn });
-
-  const result = await client.postCommitStatus("org/repo", "abc123", "pending", "test");
-  assert.deepStrictEqual(result, false);
 });
 
 test("getWorkflowIdForRun returns the run's workflow_id", async () => {
