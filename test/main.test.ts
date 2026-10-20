@@ -26,7 +26,7 @@ function nopFetch(): typeof fetch {
 function makeDeps(tracker: StubTracker): ServerDeps & { queue: DeployQueue } {
   const queue = new DeployQueue(":memory:");
   return {
-    sleepCache: tracker,
+    tracker,
     queue,
     github: new GitHubClient({ token: "test", fetchFn: nopFetch() }),
     gateConfig: {

@@ -14,7 +14,8 @@ import type { SleepTracker } from "./sleep/tracker.ts";
 import { WakeWatcher } from "./sleep/watcher.ts";
 
 export interface ServerDeps {
-  sleepCache: SleepTracker;
+  /** Source of the sleep stage; the service wraps Oura in a SleepStateCache. */
+  tracker: SleepTracker;
   queue: DeployQueue;
   github: GitHubClient;
   gateConfig: GateConfig;
@@ -77,7 +78,7 @@ function json(data: unknown, status = 200): Response {
 }
 
 export function createHandler(deps: ServerDeps): (req: Request) => Promise<Response> {
-  const { sleepCache, queue, github, gateConfig, engineer, apiToken } = deps;
+  const { tracker, queue, github, gateConfig, engineer, apiToken } = deps;
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -90,7 +91,7 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
     }
 
     if (route === "GET /status") {
-      const status = await sleepCache.getStatus(engineer);
+      const status = await tracker.getStatus(engineer);
       const gateResult = checkGate(status, gateConfig);
       return json({
         engineer,
@@ -121,7 +122,7 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
     }
     const { repo, branch, sha, workflow_run_id, override_by } = parsed;
 
-    const status = await sleepCache.getStatus(engineer);
+    const status = await tracker.getStatus(engineer);
     const result = checkGate(status, gateConfig, override_by);
 
     if (!result.allowed) {
@@ -196,7 +197,7 @@ export function startService(
   const watcher =
     options.watcher ??
     new WakeWatcher({
-      tracker: deps.sleepCache,
+      tracker: deps.tracker,
       queue: deps.queue,
       github: deps.github,
       engineer: deps.engineer,
@@ -235,14 +236,13 @@ function main(): void {
     console.log(`No config at ${settings.configPath}; using default gate settings`);
   }
 
-  const tracker = new OuraTracker({ token: settings.ouraToken });
-  const sleepCache = new SleepStateCache(tracker);
+  const tracker = new SleepStateCache(new OuraTracker({ token: settings.ouraToken }));
   const queue = new DeployQueue(settings.dbPath);
   const github = new GitHubClient({ token: settings.githubToken });
 
   const service = startService(
     {
-      sleepCache,
+      tracker,
       queue,
       github,
       gateConfig: settings.gate,
