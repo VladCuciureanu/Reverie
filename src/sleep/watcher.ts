@@ -14,6 +14,8 @@ export class WakeWatcher {
   private lastState: SleepState | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private onDrain?: (count: number) => void;
+  private timeoutMinutes?: number;
+  private now: () => Date;
 
   constructor(options: {
     tracker: SleepTracker;
@@ -22,6 +24,9 @@ export class WakeWatcher {
     engineer: string;
     pollMs?: number;
     onDrain?: (count: number) => void;
+    /** Queued deploys older than this are dropped and marked failed. */
+    timeoutMinutes?: number;
+    now?: () => Date;
   }) {
     this.tracker = options.tracker;
     this.queue = options.queue;
@@ -29,9 +34,13 @@ export class WakeWatcher {
     this.engineer = options.engineer;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
     this.onDrain = options.onDrain;
+    this.timeoutMinutes = options.timeoutMinutes;
+    this.now = options.now ?? (() => new Date());
   }
 
   async poll(): Promise<number> {
+    await this.expireStale();
+
     const status = await this.tracker.getStatus(this.engineer);
     const currentState = status?.state ?? null;
     const wasAsleep =
@@ -46,6 +55,25 @@ export class WakeWatcher {
     }
 
     return 0;
+  }
+
+  private async expireStale(): Promise<void> {
+    if (this.timeoutMinutes === undefined) return;
+    const cutoff = new Date(
+      this.now().getTime() - this.timeoutMinutes * 60 * 1000,
+    );
+    for (const deploy of this.queue.expireOlderThan(cutoff)) {
+      try {
+        await this.github.postCommitStatus(
+          deploy.repo,
+          deploy.sha,
+          "failure",
+          `Deploy expired after ${this.timeoutMinutes} minutes in the queue.`,
+        );
+      } catch (err) {
+        console.error("Failed to post expiry commit status:", err);
+      }
+    }
   }
 
   private async drainQueue(): Promise<number> {

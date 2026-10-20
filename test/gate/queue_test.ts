@@ -73,3 +73,25 @@ test("enqueue keeps the earlier deploy if the insert fails", () => {
     assert.deepStrictEqual(items[0].sha, "abc123");
   });
 });
+
+test("expireOlderThan removes and returns only stale deploys", () => {
+  let now = new Date("2026-03-24T02:00:00Z");
+  const queue = new DeployQueue(":memory:", { now: () => now });
+  try {
+    queue.enqueue("org/repo", "main", "abc123", "run-1");
+    now = new Date("2026-03-24T02:10:00Z");
+    queue.enqueue("org/repo", "staging", "def456", "run-2");
+
+    const expired = queue.expireOlderThan(new Date("2026-03-24T02:05:00Z"));
+    assert.deepStrictEqual(
+      expired.map((d) => d.sha),
+      ["abc123"],
+    );
+    assert.deepStrictEqual(
+      queue.peek().map((d) => d.sha),
+      ["def456"],
+    );
+  } finally {
+    queue.close();
+  }
+});

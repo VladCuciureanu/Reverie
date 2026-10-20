@@ -173,3 +173,42 @@ test("keeps deploy queued when the run's workflow can't be resolved", async () =
 
   queue.close();
 });
+
+test("fails and drops deploys queued longer than timeoutMinutes", async () => {
+  const calls: Call[] = [];
+  let now = new Date("2026-03-24T02:00:00Z");
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:", { now: () => now });
+  const github = new GitHubClient({
+    token: "test",
+    fetchFn: githubFetch(calls),
+  });
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    timeoutMinutes: 30,
+    now: () => now,
+  });
+
+  tracker.status = { state: "deep", since: now };
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  now = new Date("2026-03-24T02:29:00Z");
+  await watcher.poll();
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.deepStrictEqual(calls.length, 0);
+
+  now = new Date("2026-03-24T02:31:00Z");
+  await watcher.poll();
+  assert.deepStrictEqual(queue.count(), 0);
+  assert.deepStrictEqual(calls.length, 1);
+  assert.deepStrictEqual(
+    calls[0].url,
+    "https://api.github.com/repos/org/repo/statuses/abc123",
+  );
+  assert.deepStrictEqual(JSON.parse(calls[0].body ?? "").state, "failure");
+
+  queue.close();
+});
