@@ -170,6 +170,8 @@ Both endpoints require `Authorization: Bearer $REVERIE_API_TOKEN` and return `40
 }
 ```
 
+`retry_after_seconds` is `null` when allowed, `300` when the stage is unknown, and `1800` otherwise. It is only a hint: the deploy is already queued and is re-dispatched automatically, so callers don't need to retry.
+
 The queue keeps one deploy per repository and branch; a newer blocked deploy replaces the older one. The watcher polls every 2 minutes through a 10-minute cache, so Oura is queried at most once per 10 minutes while it returns a stage, and a wake-up can take up to 10 minutes to be noticed.
 
 ## Other sleep trackers
