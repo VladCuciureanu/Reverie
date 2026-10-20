@@ -195,3 +195,7 @@ npm run lint       # biome lint
 npm run format     # biome check --write (format, sort imports, safe fixes)
 npm run check      # biome check, typecheck and tests, as CI runs them
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
