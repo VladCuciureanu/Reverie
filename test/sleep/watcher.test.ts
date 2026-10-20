@@ -599,3 +599,57 @@ test("an unknown stage doesn't retry a failed dispatch, even with fallback: allo
 
   queue.close();
 });
+
+for (const [status, reason] of [
+  [422, /no workflow_dispatch trigger/],
+  [404, /workflow 4242 .*not found/i],
+] as const) {
+  test(`drops a deploy and fails its status when the dispatch returns ${status}`, async () => {
+    const calls: Call[] = [];
+    const { tracker, queue, github } = setup(calls, 200, status);
+    const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+    const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+    tracker.status = { state: "rem", since: new Date() };
+    await watcher.poll();
+    queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(queue.count(), 0);
+    assert.deepStrictEqual(dispatchCount(), 1);
+    const statuses = calls.filter((c) => c.url.includes("/statuses/"));
+    assert.deepStrictEqual(statuses.length, 1);
+    const body = JSON.parse(statuses[0].body ?? "");
+    assert.deepStrictEqual(body.state, "failure");
+    assert.match(body.description, reason);
+
+    // Not retried on later polls.
+    await watcher.poll();
+    assert.deepStrictEqual(dispatchCount(), 1);
+
+    queue.close();
+  });
+}
+
+test("keeps deploy queued and retries when the dispatch is rate limited (429)", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 200, 429);
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "rem", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.ok(!calls.some((c) => c.url.includes("/statuses/")));
+
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  queue.close();
+});

@@ -4,6 +4,8 @@ const STATUS_CONTEXT = "reverie/gate";
 /** Per-request timeout; well under the wake watcher's 2-minute poll interval. */
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 
+export type DispatchResult = "dispatched" | "workflow_not_found" | "not_dispatchable" | "failed";
+
 export interface GitHubClientOptions {
   token: string;
   baseUrl?: string;
@@ -55,7 +57,12 @@ export class GitHubClient {
       : null;
   }
 
-  async retriggerWorkflow(repo: string, workflowId: string, ref: string): Promise<boolean> {
+  /**
+   * Dispatches a workflow on `ref`. "workflow_not_found" (404) and
+   * "not_dispatchable" (422, e.g. no workflow_dispatch trigger) won't succeed
+   * on a retry; "failed" (401, 403, 429, 5xx, ...) might.
+   */
+  async retriggerWorkflow(repo: string, workflowId: string, ref: string): Promise<DispatchResult> {
     const url = `${this.baseUrl}/repos/${repo}/actions/workflows/${workflowId}/dispatches`;
     const response = await this.request(url, {
       method: "POST",
@@ -67,7 +74,10 @@ export class GitHubClient {
       body: JSON.stringify({ ref }),
     });
 
-    return response.status === 204;
+    if (response.status === 204) return "dispatched";
+    if (response.status === 404) return "workflow_not_found";
+    if (response.status === 422) return "not_dispatchable";
+    return "failed";
   }
 
   /** The status is informational, so an error response is ignored; network errors and timeouts still throw. */

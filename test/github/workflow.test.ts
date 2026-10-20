@@ -19,7 +19,7 @@ test("retriggerWorkflow sends dispatch request", async () => {
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
   const result = await client.retriggerWorkflow("org/repo", "deploy.yml", "main");
-  assert.deepStrictEqual(result, true);
+  assert.deepStrictEqual(result, "dispatched");
   assert.deepStrictEqual(calls.length, 1);
   assert.deepStrictEqual(
     calls[0].url,
@@ -31,12 +31,25 @@ test("retriggerWorkflow sends dispatch request", async () => {
   assert.deepStrictEqual(body.ref, "main");
 });
 
-test("retriggerWorkflow returns false on failure", async () => {
-  const { fetchFn } = capturingFetch(403);
-  const client = new GitHubClient({ token: "gh-token", fetchFn });
+test("retriggerWorkflow reports which failures are permanent", async () => {
+  const expected: [number, string][] = [
+    [404, "workflow_not_found"],
+    [422, "not_dispatchable"],
+    [401, "failed"],
+    [403, "failed"],
+    [429, "failed"],
+    [500, "failed"],
+  ];
+  for (const [status, result] of expected) {
+    const { fetchFn } = capturingFetch(status);
+    const client = new GitHubClient({ token: "gh-token", fetchFn });
 
-  const result = await client.retriggerWorkflow("org/repo", "deploy.yml", "main");
-  assert.deepStrictEqual(result, false);
+    assert.deepStrictEqual(
+      await client.retriggerWorkflow("org/repo", "deploy.yml", "main"),
+      result,
+      `status ${status}`,
+    );
+  }
 });
 
 test("postCommitStatus sends status request", async () => {

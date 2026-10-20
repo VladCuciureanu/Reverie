@@ -111,19 +111,19 @@ export class WakeWatcher {
 
     for (const deploy of deploys) {
       const result = await this.dispatch(deploy);
-      if (result === "retry") {
+      if (result.outcome === "retry") {
         retry = true;
         continue;
       }
-      if (result === "gone") {
-        // The run was deleted (or never existed): retrying can't help.
+      if (result.outcome === "dropped") {
+        // Retrying can't help, so fail the deploy instead of retrying until it expires.
         this.queue.remove(deploy.id);
         try {
           await this.github.postCommitStatus(
             deploy.repo,
             deploy.sha,
             "failure",
-            `Deploy dropped: workflow run ${deploy.workflow_run_id} was not found, so it can't be re-run.`,
+            `Deploy dropped: ${result.reason}`,
           );
         } catch (err) {
           console.error("Failed to post dropped-deploy commit status:", err);
@@ -153,19 +153,38 @@ export class WakeWatcher {
   }
 
   /**
-   * Re-dispatches a deploy's workflow. "gone" means its run can't be found, so
-   * it can never be dispatched; "retry" covers every other failure.
+   * Re-dispatches a deploy's workflow. "dropped" means it can never be
+   * dispatched (with the reason why); "retry" covers every other failure.
    */
-  private async dispatch(deploy: QueuedDeploy): Promise<"dispatched" | "gone" | "retry"> {
+  private async dispatch(
+    deploy: QueuedDeploy,
+  ): Promise<{ outcome: "dispatched" | "retry" } | { outcome: "dropped"; reason: string }> {
     try {
       // workflow_dispatch needs the workflow ID, not the run ID we queued.
       const workflowId = await this.github.getWorkflowIdForRun(deploy.repo, deploy.workflow_run_id);
-      if (workflowId === null) return "gone";
-      const ok = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
-      return ok ? "dispatched" : "retry";
+      if (workflowId === null) {
+        return {
+          outcome: "dropped",
+          reason: `workflow run ${deploy.workflow_run_id} was not found, so it can't be re-run.`,
+        };
+      }
+      const result = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
+      switch (result) {
+        case "dispatched":
+          return { outcome: "dispatched" };
+        case "workflow_not_found":
+          return { outcome: "dropped", reason: `workflow ${workflowId} was not found.` };
+        case "not_dispatchable":
+          return {
+            outcome: "dropped",
+            reason: `workflow ${workflowId} has no workflow_dispatch trigger, so it can't be re-run.`,
+          };
+        case "failed":
+          return { outcome: "retry" };
+      }
     } catch (err) {
       console.error(`Failed to re-trigger queued deploy for ${deploy.repo}@${deploy.branch}:`, err);
-      return "retry";
+      return { outcome: "retry" };
     }
   }
 

@@ -8,7 +8,7 @@ Reverie has two parts: an HTTP service that reads the engineer's sleep stage fro
 
 The watcher applies the same `gate` settings as `POST /gate/check`, and re-dispatches when one poll finds the gate closed (a `block_on` stage, or a stage the `fallback` blocks, including unknown with `fallback: block`) and the next poll with a known stage finds it open. An unknown stage never counts as the gate opening, even with `fallback: allow`. The watcher only re-dispatches after it has itself seen the gate closed during the current process lifetime; if the service starts (or restarts) while the gate is already open, queued deploys stay queued until the gate next closes and reopens, or until they expire.
 
-A deploy whose re-dispatch fails (a network error, a timeout, or an error response from GitHub) stays queued and is retried on each later poll while the gate stays open and the stage is known, until it is dispatched or expires after `gate.timeout_minutes`. A deploy whose original workflow run no longer exists is dropped instead, with a `failure` commit status.
+A deploy whose re-dispatch fails with a network error, a timeout, or a `401`, `403`, `429` or `5xx` response from GitHub stays queued and is retried on each later poll while the gate stays open and the stage is known, until it is dispatched or expires after `gate.timeout_minutes`. A deploy that can never be re-dispatched is dropped instead, with a `failure` commit status saying why: its original workflow run no longer exists, its workflow no longer exists (`404` on dispatch), or its workflow has no `workflow_dispatch` trigger (`422`).
 
 ## Requirements
 
