@@ -18,7 +18,7 @@ export class DeployQueue {
   private db: DatabaseSync;
   private now: () => Date;
 
-  constructor(dbPath: string = "reverie.db", options?: { now?: () => Date }) {
+  constructor(dbPath: string, options?: { now?: () => Date }) {
     this.now = options?.now ?? (() => new Date());
     this.db = new DatabaseSync(dbPath);
     this.db.exec(`
