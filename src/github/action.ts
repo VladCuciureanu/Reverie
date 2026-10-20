@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 export interface ActionInputs {
@@ -81,10 +79,7 @@ export async function runAction(
   return failure(reason, sleepState);
 }
 
-if (
-  process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (import.meta.main) {
   const inputs: ActionInputs = {
     reverieUrl: process.env.INPUT_REVERIE_URL ?? "",
     token: process.env.INPUT_REVERIE_TOKEN ?? "",

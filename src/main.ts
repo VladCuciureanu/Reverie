@@ -2,8 +2,6 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { SleepStateCache } from "./sleep/state.ts";
 import { OuraTracker } from "./sleep/oura.ts";
@@ -235,10 +233,7 @@ export function startService(
   };
 }
 
-if (
-  process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (import.meta.main) {
   const configPath = process.env.REVERIE_CONFIG ?? ".reverie.yml";
   let config: ReverieConfig | null;
   try {

@@ -1,43 +1,43 @@
 # Reverie
 
-> Your sleep as a deployment window.
+Blocks production deploys while the on-call engineer is in deep or REM sleep, and re-runs them when they wake up.
 
-Reverie connects to your sleep tracker and blocks production deploys while you're in deep sleep or REM. When you wake up, queued deploys resume automatically.
+> Deployment rejected: Engineer is in REM sleep.
 
-**"Deployment rejected: engineer is in REM."**
+Reverie has two parts: an HTTP service that reads the engineer's sleep stage from Oura and keeps a SQLite queue of blocked deploys, and a GitHub composite action that asks the service before each deploy. A blocked deploy fails its workflow run, gets a `pending` commit status, and is re-dispatched once the engineer moves from deep/REM to light sleep or awake.
 
-## How It Works
+The watcher only re-dispatches after it has itself seen the engineer in deep or REM sleep during the current process lifetime; if the service starts (or restarts) after the engineer is already awake, queued deploys stay queued until the next deep/REM-to-awake transition or until they expire.
 
-1. Reverie polls your sleep tracker for your current sleep state
-2. A GitHub Action gate checks your state before each deploy
-3. If you're in deep/REM sleep, the deploy is blocked and queued
-4. When you wake, queued deploys are re-triggered automatically
+## Requirements
 
-## Quick Start
+- Node.js 26 or later (TypeScript runs directly via type stripping; SQLite via `node:sqlite`)
+- An Oura personal access token
+- A GitHub token that can write commit statuses and dispatch workflows on the gated repositories
 
-### 1. Deploy the Reverie service
+## Running the service
 
 ```bash
-# Set required environment variables
-export OURA_TOKEN="your-oura-api-token"
-export GITHUB_TOKEN="your-github-app-token"
-export REVERIE_ENGINEER="vlad"
-export REVERIE_API_TOKEN="$(openssl rand -hex 32)" # shared secret for /gate/check
-export PORT=8000               # optional, defaults to 8000
-export REVERIE_DB="reverie.db" # optional, defaults to reverie.db
-export REVERIE_CONFIG=".reverie.yml" # optional, defaults to ./.reverie.yml
-
 npm install
-npm start
+OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(openssl rand -hex 32)" npm start
 ```
 
-### 2. Configure the gate with `.reverie.yml`
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on `POST /gate/check`. The service exits if it is unset. |
+| `OURA_TOKEN` | Yes | | Oura API personal access token |
+| `GITHUB_TOKEN` | Yes | | Used to post commit statuses and dispatch queued workflows |
+| `REVERIE_ENGINEER` | No | `engineer` from the config file, else `engineer` | Engineer the service gates on |
+| `REVERIE_CONFIG` | No | `.reverie.yml` | Path to the config file, relative to the working directory |
+| `REVERIE_DB` | No | `reverie.db` | SQLite database path |
+| `PORT` | No | `8000` | HTTP port |
 
-The service reads `.reverie.yml` from its working directory (override the path with `REVERIE_CONFIG`). If the file is absent, the defaults below apply; an invalid file stops the service from starting.
+### `.reverie.yml`
+
+Optional. If the file is missing, the gate defaults below apply; if it exists but is invalid, the service exits.
 
 ```yaml
-sleep_tracker: oura
-engineer: vlad
+sleep_tracker: oura   # required; only oura is supported
+engineer: vlad        # required; REVERIE_ENGINEER takes precedence
 gate:
   block_on: [deep, rem]
   allow_on: [awake, light]
@@ -45,11 +45,18 @@ gate:
   timeout_minutes: 480
 ```
 
-### 3. Add the gate to your deploy workflow
+| Key | Default | Description |
+|---|---|---|
+| `gate.block_on` | `[deep, rem]` | Stages that block deploys. Valid stages: `awake`, `light`, `deep`, `rem`. |
+| `gate.allow_on` | `[awake, light]` | Stages that allow deploys. `block_on` wins if a stage is in both. |
+| `gate.fallback` | `block` | `allow` or `block`; used when the stage is unknown or in neither list. Any value other than `allow` means `block`. |
+| `gate.timeout_minutes` | `480` | Queued deploys older than this are dropped and their commit status set to `failure`. |
+
+## Gating a workflow
+
+The action runs TypeScript with the runner's Node, so set up Node 26 first. The workflow needs a `workflow_dispatch` trigger, because that is how Reverie re-runs it.
 
 ```yaml
-name: Deploy to Production
-
 on:
   push:
     branches: [main]
@@ -64,61 +71,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 24 # the action runs TypeScript directly on Node 24+
-
-      - name: Check sleep gate
-        uses: reverie/gate@v1
+          node-version: 26
+      - uses: VladCuciureanu/Reverie@main
         with:
           reverie_url: ${{ secrets.REVERIE_URL }}
           reverie_token: ${{ secrets.REVERIE_API_TOKEN }}
-          engineer: vlad
+          engineer: ${{ vars.REVERIE_ENGINEER }}
           override_by: ${{ github.event.inputs.override_by }}
-
-      - name: Deploy
-        run: ./deploy.sh
+      - run: ./deploy.sh
 ```
 
-The gate step needs these repository settings (Settings → Secrets and variables → Actions):
+| Input | Required | Description |
+|---|---|---|
+| `reverie_url` | Yes | Base URL of the service, e.g. `https://reverie.example.com` |
+| `reverie_token` | Yes | Same value as the service's `REVERIE_API_TOKEN` |
+| `engineer` | Yes | Must match the service's engineer, otherwise the check fails with `400` |
+| `override_by` | No | Name of the engineer overriding the gate. Any non-empty value skips the gate for this run and is shown in the reason. |
+
+The step exits `0` when the deploy is allowed and `1` when it is blocked, the service returns an error, or the service cannot be reached. It has no outputs.
+
+Repository settings (Settings → Secrets and variables → Actions):
 
 | Name | Kind | Description |
 |---|---|---|
-| `REVERIE_URL` | Secret | Base URL of your Reverie service, e.g. `https://reverie.example.com` |
+| `REVERIE_URL` | Secret | Base URL of the service |
 | `REVERIE_API_TOKEN` | Secret | Same value as the service's `REVERIE_API_TOKEN` |
-| `REVERIE_ENGINEER` | Variable | Engineer identifier (used by the example `deploy.yml`); must match the service's engineer |
+| `REVERIE_ENGINEER` | Variable | Engineer identifier passed to the `engineer` input |
 
-This repository's own [`deploy.yml`](.github/workflows/deploy.yml) is an example: when `REVERIE_URL` is not set it skips the gate with a notice instead of failing.
+This repository's [`deploy.yml`](.github/workflows/deploy.yml) is a working example; it skips the gate with a notice when `REVERIE_URL` is not set.
 
-## Configuration Reference
+## HTTP API
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `sleep_tracker` | string | — | Tracker adapter name (only `oura` is supported) |
-| `engineer` | string | — | Engineer identifier (`REVERIE_ENGINEER` takes precedence) |
-| `gate.block_on` | string[] | `[deep, rem]` | Sleep stages that block deploys |
-| `gate.allow_on` | string[] | `[awake, light]` | Sleep stages that allow deploys. Stages in neither `block_on` nor `allow_on` use `fallback`; `block_on` wins if a stage is in both |
-| `gate.fallback` | string | `block` | Behavior when sleep state is unknown: `block` or `allow` |
-| `gate.timeout_minutes` | number | `480` | Max minutes a deploy stays queued; after that it is dropped and its commit status set to `failure` |
-
-## API
-
-### `GET /status`
+`GET /status` (no auth):
 
 ```json
 {
   "engineer": "vlad",
   "sleep_state": "rem",
-  "since": "2026-03-24T02:34:00Z",
+  "since": "2026-03-24T02:34:00.000Z",
   "gate": "blocked",
   "queued_deploys": 1
 }
 ```
 
-### `POST /gate/check`
+`sleep_state` is `unknown` and `since` is `null` when the stage can't be determined: the Oura request failed or there is no phase data for the current time.
 
-Requires `Authorization: Bearer $REVERIE_API_TOKEN` (otherwise `401`). Request body:
+`POST /gate/check` requires `Authorization: Bearer $REVERIE_API_TOKEN` (`401` otherwise):
 
 ```json
 {
@@ -126,11 +126,12 @@ Requires `Authorization: Bearer $REVERIE_API_TOKEN` (otherwise `401`). Request b
   "branch": "main",
   "sha": "abc123",
   "workflow_run_id": "987654",
+  "engineer": "vlad",
   "override_by": "alice"
 }
 ```
 
-`repo`, `branch`, `sha` and `workflow_run_id` must be non-empty strings; `override_by` is an optional string. Malformed JSON or invalid fields return `400`. Response (`200` when allowed, `423` when blocked):
+`repo`, `branch`, `sha` and `workflow_run_id` must be non-empty strings; `engineer` and `override_by` are optional strings. Invalid JSON, invalid fields or an `engineer` other than the service's return `400` with `{"error": "..."}`. Otherwise the response is `200` (allowed) or `423` (blocked and queued):
 
 ```json
 {
@@ -141,86 +142,25 @@ Requires `Authorization: Bearer $REVERIE_API_TOKEN` (otherwise `401`). Request b
 }
 ```
 
-## Team Override
+The queue keeps one deploy per repository and branch; a newer blocked deploy replaces the older one. The watcher polls every 2 minutes through a 10-minute cache, so Oura is queried at most once per 10 minutes while it returns a stage, and a wake-up can take up to 10 minutes to be noticed.
 
-Any awake engineer can override the gate for a single deploy by triggering the workflow manually and providing their name in the `override_by` input.
+## Other sleep trackers
 
-## Architecture
+Only Oura is wired in, but the service depends on this interface (`src/sleep/tracker.ts`):
 
-- **Runtime**: Node.js 24+ (TypeScript via built-in type stripping)
-- **Persistence**: SQLite (deploy queue)
-- **Auth**: GitHub App token
-- **Sleep tracker**: Generic adapter interface (Oura Ring reference implementation)
-
-```
-┌──────────────┐        poll        ┌──────────────────┐
-│  Sleep       │ ──────────────────▶│  Reverie Service │
-│  Tracker     │                    │  (Node/TS)       │
-└──────────────┘                    │                  │
-                                    │  - Sleep state   │
-┌──────────────┐   HTTP check       │  - Deploy queue  │
-│  GitHub      │ ──────────────────▶│  - Gate logic    │
-│  Actions     │ ◀──────────────────│                  │
-│              │   pass/fail        └──────────────────┘
-└──────────────┘
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `OURA_TOKEN` | Yes | Oura Ring API personal access token |
-| `GITHUB_TOKEN` | Yes | GitHub App token for commit statuses and workflow dispatch |
-| `REVERIE_ENGINEER` | No | Engineer identifier; overrides `engineer` in `.reverie.yml` (default: config value, else `engineer`). The action's `engineer` input must match it. |
-| `REVERIE_API_TOKEN` | Yes | Shared secret required as `Authorization: Bearer <token>` on `POST /gate/check`. Store the same value as the `REVERIE_API_TOKEN` repo secret and pass it to the action's `reverie_token` input. The service refuses to start without it. |
-| `PORT` | No | HTTP server port (default: `8000`) |
-| `REVERIE_DB` | No | SQLite database path (default: `reverie.db`) |
-| `REVERIE_CONFIG` | No | Path to the config file (default: `.reverie.yml`) |
-
-## Project Structure
-
-```
-src/
-  main.ts              # HTTP server entrypoint
-  config.ts            # .reverie.yml parser
-  sleep/
-    types.ts           # SleepState, SleepStatus types
-    tracker.ts         # SleepTracker interface
-    oura.ts            # Oura Ring adapter
-    state.ts           # Sleep state cache with TTL
-    watcher.ts         # Wake watcher (auto-retrigger)
-  gate/
-    gate.ts            # Deploy gate decision logic
-    queue.ts           # SQLite deploy queue
-  github/
-    action.ts          # GitHub Action entrypoint
-    workflow.ts        # GitHub API client
-test/                  # Mirror of src/ with _test.ts files
-action.yml             # GitHub Action metadata
+```typescript
+interface SleepTracker {
+  // { state: "awake" | "light" | "deep" | "rem", since: Date }, or null if unknown
+  getStatus(engineer: string): Promise<SleepStatus | null>;
+}
 ```
 
 ## Development
 
 ```bash
-npm run dev        # run with watch mode
-npm test           # run tests
-npm run typecheck  # type-check with tsc
-npm run format     # format code (Biome)
-npm run lint       # lint code (Biome)
-```
-
-## Writing a Custom Sleep Tracker Adapter
-
-Implement the `SleepTracker` interface:
-
-```typescript
-import type { SleepTracker } from "./src/sleep/tracker.ts";
-import type { SleepStatus } from "./src/sleep/types.ts";
-
-class MyTracker implements SleepTracker {
-  async getStatus(engineer: string): Promise<SleepStatus | null> {
-    // Return { state: "awake" | "light" | "deep" | "rem", since: Date }
-    // Return null if status is unavailable
-  }
-}
+npm run dev        # start with --watch
+npm test           # node --test, test/**/*_test.ts
+npm run typecheck  # tsc, no emit
+npm run lint       # biome lint
+npm run format     # biome format --write
 ```
