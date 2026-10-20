@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000002",
+      "day": "2026-03-24",
+      "type": "long_sleep",
+      "bedtime_start": "2026-03-23T23:30:00+00:00",
+      "bedtime_end": "2026-03-24T07:30:00+00:00",
+      "total_sleep_duration": 27000,
+      "deep_sleep_duration": 3600,
+      "rem_sleep_duration": 1800,
+      "light_sleep_duration": 19800,
+      "awake_time": 1800,
+      "sleep_phase_5_min": "442222221111111111113333332222222222222222222222222222222222222222222222222222222222222222224444"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000001",
+      "day": "2026-03-23",
+      "type": "late_nap",
+      "bedtime_start": "2026-03-23T15:00:00+00:00",
+      "bedtime_end": "2026-03-23T15:30:00+00:00",
+      "total_sleep_duration": 1500,
+      "deep_sleep_duration": 0,
+      "rem_sleep_duration": 0,
+      "light_sleep_duration": 1500,
+      "awake_time": 300,
+      "sleep_phase_5_min": "422224"
+    }
+  ],
+  "next_token": null
+}
