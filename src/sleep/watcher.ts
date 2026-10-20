@@ -51,6 +51,14 @@ export class WakeWatcher {
     // rules /gate/check uses to block deploys.
     const status = await this.tracker.getStatus(this.engineer);
     const blocked = !checkGate(status, this.gate).allowed;
+
+    // An unknown stage (e.g. a failed Oura read) can close the gate when the
+    // fallback blocks, but it never counts as waking up, whatever the fallback.
+    if (status === null) {
+      this.wasBlocked ||= blocked;
+      return 0;
+    }
+
     const woke = this.wasBlocked && !blocked;
     this.wasBlocked = blocked;
 
@@ -84,15 +92,21 @@ export class WakeWatcher {
       if (workflowId === null) continue;
 
       const ok = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
-      if (ok) {
+      if (!ok) continue;
+
+      // Dequeue as soon as the dispatch succeeds, so a failed status post
+      // can't get the deploy dispatched again on the next wake.
+      this.queue.remove(deploy.id);
+      drained++;
+      try {
         await this.github.postCommitStatus(
           deploy.repo,
           deploy.sha,
           "success",
           "Engineer is awake. Deploy re-triggered.",
         );
-        this.queue.remove(deploy.id);
-        drained++;
+      } catch (err) {
+        console.error("Failed to post re-trigger commit status:", err);
       }
     }
 

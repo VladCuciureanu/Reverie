@@ -280,3 +280,99 @@ test("drains when the stage becomes known again after an unknown poll blocked", 
 
   queue.close();
 });
+
+test("an unknown stage never counts as waking, even with fallback: allow", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls);
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    gate: {
+      block_on: ["deep", "rem"],
+      allow_on: ["awake", "light"],
+      fallback: "allow",
+      timeout_minutes: 480,
+    },
+  });
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  // The Oura read fails: the gate allows by fallback, but that isn't a wake.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.ok(!calls.some((c) => c.url.endsWith("/dispatches")));
+
+  // Still asleep once the stage is known again: no wake.
+  tracker.status = { state: "rem", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  // A known allowed stage after the unknown poll still counts as waking.
+  tracker.status = null;
+  await watcher.poll();
+  tracker.status = { state: "light", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+  assert.deepStrictEqual(queue.count(), 0);
+
+  queue.close();
+});
+
+test("an unknown stage that blocks still closes the gate for the next wake", async () => {
+  const { tracker, queue, github } = setup();
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  tracker.status = { state: "awake", since: new Date() };
+  await watcher.poll();
+
+  // Unknown blocks under the default fallback: block, so deploys queue up.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+
+  queue.close();
+});
+
+test("dequeues a dispatched deploy even if posting its commit status fails", async () => {
+  const calls: Call[] = [];
+  const base = githubFetch(calls);
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) =>
+    input.toString().includes("/statuses/")
+      ? Promise.reject(new Error("network down"))
+      : base(input, init)) as typeof fetch;
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:");
+  const github = new GitHubClient({ token: "test", fetchFn });
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  const errors: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    tracker.status = { state: "deep", since: new Date() };
+    await watcher.poll();
+    queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 1);
+    assert.deepStrictEqual(queue.count(), 0);
+    assert.deepStrictEqual(errors.length, 1);
+
+    // The next wake must not dispatch it again.
+    tracker.status = { state: "deep", since: new Date() };
+    await watcher.poll();
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(calls.filter((c) => c.url.endsWith("/dispatches")).length, 1);
+  } finally {
+    console.error = originalError;
+    queue.close();
+  }
+});
