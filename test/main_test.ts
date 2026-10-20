@@ -269,3 +269,25 @@ test("POST /gate/check accepts a valid token and body", async () => {
   assert.deepStrictEqual((await res.json()).allowed, true);
   deps.queue.close();
 });
+
+test("POST /gate/check still answers 423 when the commit status call throws", async (t) => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = {
+    ...makeDeps(tracker),
+    github: new GitHubClient({
+      token: "test",
+      fetchFn: (() =>
+        Promise.reject(new Error("network down"))) as typeof fetch,
+    }),
+  };
+  const errors = t.mock.method(console, "error", () => {});
+  const handler = createHandler(deps);
+
+  const res = await handler(gateCheck(validBody));
+  assert.deepStrictEqual(res.status, 423);
+  assert.deepStrictEqual((await res.json()).allowed, false);
+  assert.deepStrictEqual(deps.queue.count(), 1);
+  assert.ok(errors.mock.callCount() >= 1);
+  deps.queue.close();
+});

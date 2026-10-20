@@ -115,12 +115,18 @@ export function createHandler(
 
       if (!result.allowed) {
         queue.enqueue(repo, branch, sha, workflow_run_id);
-        await github.postCommitStatus(
-          repo,
-          sha,
-          "pending",
-          `Deploy queued: ${result.reason}`,
-        );
+        // The deploy is already queued; a failed status update is cosmetic
+        // and must not turn the 423 into a 500.
+        try {
+          await github.postCommitStatus(
+            repo,
+            sha,
+            "pending",
+            `Deploy queued: ${result.reason}`,
+          );
+        } catch (err) {
+          console.error("Failed to post pending commit status:", err);
+        }
       }
 
       return json(result, result.allowed ? 200 : 423);
