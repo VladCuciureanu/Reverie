@@ -19,7 +19,7 @@ test("retriggerWorkflow sends dispatch request", async () => {
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
   const result = await client.retriggerWorkflow("org/repo", "deploy.yml", "main");
-  assert.deepStrictEqual(result, true);
+  assert.deepStrictEqual(result, "dispatched");
   assert.deepStrictEqual(calls.length, 1);
   assert.deepStrictEqual(
     calls[0].url,
@@ -31,12 +31,25 @@ test("retriggerWorkflow sends dispatch request", async () => {
   assert.deepStrictEqual(body.ref, "main");
 });
 
-test("retriggerWorkflow returns false on failure", async () => {
-  const { fetchFn } = capturingFetch(403);
-  const client = new GitHubClient({ token: "gh-token", fetchFn });
+test("retriggerWorkflow reports which failures are permanent", async () => {
+  const expected: [number, string][] = [
+    [404, "workflow_not_found"],
+    [422, "not_dispatchable"],
+    [401, "failed"],
+    [403, "failed"],
+    [429, "failed"],
+    [500, "failed"],
+  ];
+  for (const [status, result] of expected) {
+    const { fetchFn } = capturingFetch(status);
+    const client = new GitHubClient({ token: "gh-token", fetchFn });
 
-  const result = await client.retriggerWorkflow("org/repo", "deploy.yml", "main");
-  assert.deepStrictEqual(result, false);
+    assert.deepStrictEqual(
+      await client.retriggerWorkflow("org/repo", "deploy.yml", "main"),
+      result,
+      `status ${status}`,
+    );
+  }
 });
 
 test("postCommitStatus sends status request", async () => {
@@ -78,9 +91,50 @@ test("getWorkflowIdForRun returns the run's workflow_id", async () => {
   assert.deepStrictEqual(calls[0].init?.method, "GET");
 });
 
-test("getWorkflowIdForRun returns null on failure", async () => {
+test("getWorkflowIdForRun returns null when the run doesn't exist", async () => {
   const { fetchFn } = capturingFetch(404);
   const client = new GitHubClient({ token: "gh-token", fetchFn });
 
   assert.deepStrictEqual(await client.getWorkflowIdForRun("org/repo", "987654"), null);
+});
+
+test("getWorkflowIdForRun throws on other error responses", async () => {
+  for (const status of [401, 403, 429, 500, 503]) {
+    const { fetchFn } = capturingFetch(status);
+    const client = new GitHubClient({ token: "gh-token", fetchFn });
+
+    await assert.rejects(client.getWorkflowIdForRun("org/repo", "987654"), new RegExp(`${status}`));
+  }
+});
+
+test("GitHub requests time out instead of hanging", async () => {
+  // Never settles unless the request is aborted.
+  const fetchFn = ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    })) as typeof fetch;
+  const client = new GitHubClient({ token: "gh-token", fetchFn, timeoutMs: 10 });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<"hung">((resolve) => {
+    timer = setTimeout(() => resolve("hung"), 1000);
+  });
+  try {
+    for (const call of [
+      () => client.getWorkflowIdForRun("org/repo", "987654"),
+      () => client.retriggerWorkflow("org/repo", "4242", "main"),
+      () => client.postCommitStatus("org/repo", "abc123", "pending", "Deploy queued."),
+    ]) {
+      const outcome = await Promise.race([
+        call().then(
+          () => "settled",
+          (err: Error) => err.name,
+        ),
+        hung,
+      ]);
+      assert.deepStrictEqual(outcome, "TimeoutError");
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 });

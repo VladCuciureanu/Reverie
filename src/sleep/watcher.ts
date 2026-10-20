@@ -1,6 +1,6 @@
 import { DEFAULT_GATE, type GateConfig } from "../config.ts";
 import { checkGate } from "../gate/gate.ts";
-import type { DeployQueue } from "../gate/queue.ts";
+import type { DeployQueue, QueuedDeploy } from "../gate/queue.ts";
 import type { GitHubClient } from "../github/workflow.ts";
 import type { SleepTracker } from "./tracker.ts";
 
@@ -15,6 +15,10 @@ export class WakeWatcher {
   private gate: GateConfig;
   /** Whether the gate was closed at the previous poll. */
   private wasBlocked = false;
+  /** Whether the last drain left deploys queued because dispatching them failed transiently. */
+  private retryPending = false;
+  /** The poll still running, if any; start() doesn't wait for one before firing the next. */
+  private inFlight: Promise<number> | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private onDrain?: (count: number) => void;
   private timeoutMinutes?: number;
@@ -44,7 +48,22 @@ export class WakeWatcher {
     this.now = options.now ?? (() => new Date());
   }
 
+  /**
+   * Checks the gate and drains the queue if it opened. Returns 0 without doing
+   * anything while a previous poll is still running, so a slow drain can't
+   * overlap another one and dispatch the same deploy twice.
+   */
   async poll(): Promise<number> {
+    if (this.inFlight !== null) return 0;
+    this.inFlight = this.pollOnce();
+    try {
+      return await this.inFlight;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+
+  private async pollOnce(): Promise<number> {
     await this.expireStale();
 
     // "Waking up" means the gate goes from closed to open, by the same
@@ -62,7 +81,10 @@ export class WakeWatcher {
     const woke = this.wasBlocked && !blocked;
     this.wasBlocked = blocked;
 
-    return woke ? await this.drainQueue() : 0;
+    // Deploys whose dispatch failed are retried on each poll while the gate
+    // stays open; timeoutMinutes eventually expires one that keeps failing.
+    const retry = this.retryPending && !blocked;
+    return woke || retry ? await this.drainQueue() : 0;
   }
 
   private async expireStale(): Promise<void> {
@@ -85,14 +107,29 @@ export class WakeWatcher {
   private async drainQueue(): Promise<number> {
     const deploys = this.queue.peek();
     let drained = 0;
+    let retry = false;
 
     for (const deploy of deploys) {
-      // workflow_dispatch needs the workflow ID, not the run ID we queued.
-      const workflowId = await this.github.getWorkflowIdForRun(deploy.repo, deploy.workflow_run_id);
-      if (workflowId === null) continue;
-
-      const ok = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
-      if (!ok) continue;
+      const result = await this.dispatch(deploy);
+      if (result.outcome === "retry") {
+        retry = true;
+        continue;
+      }
+      if (result.outcome === "dropped") {
+        // Retrying can't help, so fail the deploy instead of retrying until it expires.
+        this.queue.remove(deploy.id);
+        try {
+          await this.github.postCommitStatus(
+            deploy.repo,
+            deploy.sha,
+            "failure",
+            `Deploy dropped: ${result.reason}`,
+          );
+        } catch (err) {
+          console.error("Failed to post dropped-deploy commit status:", err);
+        }
+        continue;
+      }
 
       // Dequeue as soon as the dispatch succeeds, so a failed status post
       // can't get the deploy dispatched again on the next wake.
@@ -110,8 +147,45 @@ export class WakeWatcher {
       }
     }
 
+    this.retryPending = retry;
     this.onDrain?.(drained);
     return drained;
+  }
+
+  /**
+   * Re-dispatches a deploy's workflow. "dropped" means it can never be
+   * dispatched (with the reason why); "retry" covers every other failure.
+   */
+  private async dispatch(
+    deploy: QueuedDeploy,
+  ): Promise<{ outcome: "dispatched" | "retry" } | { outcome: "dropped"; reason: string }> {
+    try {
+      // workflow_dispatch needs the workflow ID, not the run ID we queued.
+      const workflowId = await this.github.getWorkflowIdForRun(deploy.repo, deploy.workflow_run_id);
+      if (workflowId === null) {
+        return {
+          outcome: "dropped",
+          reason: `workflow run ${deploy.workflow_run_id} was not found, so it can't be re-run.`,
+        };
+      }
+      const result = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
+      switch (result) {
+        case "dispatched":
+          return { outcome: "dispatched" };
+        case "workflow_not_found":
+          return { outcome: "dropped", reason: `workflow ${workflowId} was not found.` };
+        case "not_dispatchable":
+          return {
+            outcome: "dropped",
+            reason: `workflow ${workflowId} has no workflow_dispatch trigger, so it can't be re-run.`,
+          };
+        case "failed":
+          return { outcome: "retry" };
+      }
+    } catch (err) {
+      console.error(`Failed to re-trigger queued deploy for ${deploy.repo}@${deploy.branch}:`, err);
+      return { outcome: "retry" };
+    }
   }
 
   start(): void {

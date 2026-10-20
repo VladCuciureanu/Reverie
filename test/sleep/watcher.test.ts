@@ -19,8 +19,8 @@ interface Call {
   body?: string;
 }
 
-/** Fake GitHub API: run lookups return workflow 4242; dispatches return 204. */
-function githubFetch(calls: Call[] = [], runStatus = 200): typeof fetch {
+/** Fake GitHub API: run lookups return workflow 4242; dispatches return 204 by default. */
+function githubFetch(calls: Call[] = [], runStatus = 200, dispatchStatus = 204): typeof fetch {
   return ((input: string | URL | Request, init?: RequestInit) => {
     const url = input.toString();
     const method = init?.method ?? "GET";
@@ -34,18 +34,18 @@ function githubFetch(calls: Call[] = [], runStatus = 200): typeof fetch {
       );
     }
     if (url.endsWith("/dispatches")) {
-      return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(null, { status: dispatchStatus }));
     }
     return Promise.resolve(new Response(null, { status: 201 }));
   }) as typeof fetch;
 }
 
-function setup(calls: Call[] = [], runStatus = 200) {
+function setup(calls: Call[] = [], runStatus = 200, dispatchStatus = 204) {
   const tracker = new ControllableTracker();
   const queue = new DeployQueue(":memory:");
   const github = new GitHubClient({
     token: "test",
-    fetchFn: githubFetch(calls, runStatus),
+    fetchFn: githubFetch(calls, runStatus, dispatchStatus),
   });
   return { tracker, queue, github };
 }
@@ -154,7 +154,7 @@ test("dispatches the run's workflow ID, not the run ID", async () => {
   queue.close();
 });
 
-test("keeps deploy queued when the run's workflow can't be resolved", async () => {
+test("drops a deploy and fails its status when the queued run no longer exists", async () => {
   const calls: Call[] = [];
   const { tracker, queue, github } = setup(calls, 404);
   const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
@@ -165,8 +165,66 @@ test("keeps deploy queued when the run's workflow can't be resolved", async () =
 
   tracker.status = { state: "awake", since: new Date() };
   assert.deepStrictEqual(await watcher.poll(), 0);
-  assert.deepStrictEqual(queue.count(), 1);
+  assert.deepStrictEqual(queue.count(), 0);
   assert.ok(!calls.some((c) => c.url.endsWith("/dispatches")));
+  const statuses = calls.filter((c) => c.url.includes("/statuses/"));
+  assert.deepStrictEqual(statuses.length, 1);
+  assert.deepStrictEqual(statuses[0].url, "https://api.github.com/repos/org/repo/statuses/abc123");
+  const body = JSON.parse(statuses[0].body ?? "");
+  assert.deepStrictEqual(body.state, "failure");
+  assert.match(body.description, /run 987654 .*not found/i);
+
+  // Not retried on later polls.
+  const lookups = calls.filter((c) => c.url.includes("/actions/runs/")).length;
+  await watcher.poll();
+  assert.deepStrictEqual(calls.filter((c) => c.url.includes("/actions/runs/")).length, lookups);
+
+  queue.close();
+});
+
+test("keeps deploy queued and retries when the run lookup fails with a server error", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 503);
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const lookups = () => calls.filter((c) => c.url.includes("/actions/runs/")).length;
+
+  const errors: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    tracker.status = { state: "rem", since: new Date() };
+    await watcher.poll();
+    queue.enqueue("org/repo", "main", "abc123", "987654");
+
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(queue.count(), 1);
+    assert.deepStrictEqual(lookups(), 1);
+    assert.ok(!calls.some((c) => c.url.includes("/statuses/")));
+
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(lookups(), 2);
+    assert.deepStrictEqual(queue.count(), 1);
+  } finally {
+    console.error = originalError;
+    queue.close();
+  }
+});
+
+test("keeps deploy queued and posts no success status when the dispatch fails", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 200, 500);
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  tracker.status = { state: "rem", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "987654");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.deepStrictEqual(calls.filter((c) => c.url.endsWith("/dispatches")).length, 1);
+  assert.ok(!calls.some((c) => c.url.includes("/statuses/")));
 
   queue.close();
 });
@@ -375,4 +433,223 @@ test("dequeues a dispatched deploy even if posting its commit status fails", asy
     console.error = originalError;
     queue.close();
   }
+});
+
+test("a network error on one deploy doesn't stop the rest of the drain", async () => {
+  const calls: Call[] = [];
+  const base = githubFetch(calls);
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) =>
+    input.toString().includes("/actions/runs/run-1")
+      ? Promise.reject(new Error("network down"))
+      : base(input, init)) as typeof fetch;
+  let now = new Date("2026-03-24T02:00:00Z");
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:", { now: () => now });
+  const github = new GitHubClient({ token: "test", fetchFn });
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  const errors: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    tracker.status = { state: "deep", since: now };
+    await watcher.poll();
+    queue.enqueue("org/a", "main", "aaa", "run-1");
+    now = new Date("2026-03-24T02:01:00Z");
+    queue.enqueue("org/b", "main", "bbb", "run-2");
+
+    tracker.status = { state: "awake", since: now };
+    assert.deepStrictEqual(await watcher.poll(), 1);
+    assert.deepStrictEqual(errors.length, 1);
+    assert.deepStrictEqual(
+      queue.peek().map((d) => d.repo),
+      ["org/a"],
+    );
+    const dispatches = calls.filter((c) => c.url.endsWith("/dispatches"));
+    assert.deepStrictEqual(dispatches.length, 1);
+    assert.ok(dispatches[0].url.startsWith("https://api.github.com/repos/org/b/"));
+  } finally {
+    console.error = originalError;
+    queue.close();
+  }
+});
+
+test("retries a failed dispatch once per poll while the gate stays open", async () => {
+  const calls: Call[] = [];
+  let dispatchStatus = 500;
+  const base = githubFetch(calls);
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) => {
+    if (!input.toString().endsWith("/dispatches")) return base(input, init);
+    calls.push({ url: input.toString(), method: init?.method ?? "GET" });
+    return Promise.resolve(new Response(null, { status: dispatchStatus }));
+  }) as typeof fetch;
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:");
+  const github = new GitHubClient({ token: "test", fetchFn });
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 1);
+
+  // Still failing: one more attempt on the next poll, no more.
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+
+  // The gate closes: no retries until it opens again.
+  tracker.status = { state: "rem", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 3);
+
+  // GitHub recovers while the engineer stays awake.
+  dispatchStatus = 204;
+  assert.deepStrictEqual(await watcher.poll(), 1);
+  assert.deepStrictEqual(queue.count(), 0);
+  assert.deepStrictEqual(dispatchCount(), 4);
+
+  // Nothing left to retry.
+  queue.enqueue("org/repo", "main", "def456", "run-2");
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 4);
+
+  queue.close();
+});
+
+test("a poll that overlaps an in-flight retry doesn't dispatch the deploy again", async () => {
+  const calls: Call[] = [];
+  const base = githubFetch(calls);
+  let release: (res: Response) => void = () => {};
+  const responses: (() => Promise<Response>)[] = [
+    () => Promise.resolve(new Response(null, { status: 500 })),
+    () => new Promise<Response>((resolve) => (release = resolve)),
+  ];
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) => {
+    if (!input.toString().endsWith("/dispatches")) return base(input, init);
+    calls.push({ url: input.toString(), method: init?.method ?? "GET" });
+    const next = responses.shift();
+    return next ? next() : Promise.resolve(new Response(null, { status: 204 }));
+  }) as typeof fetch;
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:");
+  const github = new GitHubClient({ token: "test", fetchFn });
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+
+  // The retry's dispatch hangs; the next tick fires before it settles.
+  const slow = watcher.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(dispatchCount(), 2);
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+
+  release(new Response(null, { status: 204 }));
+  assert.deepStrictEqual(await slow, 1);
+  assert.deepStrictEqual(queue.count(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+
+  queue.close();
+});
+
+test("an unknown stage doesn't retry a failed dispatch, even with fallback: allow", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 200, 500);
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    gate: {
+      block_on: ["deep", "rem"],
+      allow_on: ["awake", "light"],
+      fallback: "allow",
+      timeout_minutes: 480,
+    },
+  });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 1);
+
+  // A retry is pending, but the stage is unknown: no dispatch.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 1);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  queue.close();
+});
+
+for (const [status, reason] of [
+  [422, /no workflow_dispatch trigger/],
+  [404, /workflow 4242 .*not found/i],
+] as const) {
+  test(`drops a deploy and fails its status when the dispatch returns ${status}`, async () => {
+    const calls: Call[] = [];
+    const { tracker, queue, github } = setup(calls, 200, status);
+    const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+    const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+    tracker.status = { state: "rem", since: new Date() };
+    await watcher.poll();
+    queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(queue.count(), 0);
+    assert.deepStrictEqual(dispatchCount(), 1);
+    const statuses = calls.filter((c) => c.url.includes("/statuses/"));
+    assert.deepStrictEqual(statuses.length, 1);
+    const body = JSON.parse(statuses[0].body ?? "");
+    assert.deepStrictEqual(body.state, "failure");
+    assert.match(body.description, reason);
+
+    // Not retried on later polls.
+    await watcher.poll();
+    assert.deepStrictEqual(dispatchCount(), 1);
+
+    queue.close();
+  });
+}
+
+test("keeps deploy queued and retries when the dispatch is rate limited (429)", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 200, 429);
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+  const dispatchCount = () => calls.filter((c) => c.url.endsWith("/dispatches")).length;
+
+  tracker.status = { state: "rem", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.ok(!calls.some((c) => c.url.includes("/statuses/")));
+
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(dispatchCount(), 2);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  queue.close();
 });
