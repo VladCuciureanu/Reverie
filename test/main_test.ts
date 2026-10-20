@@ -291,3 +291,18 @@ test("POST /gate/check still answers 423 when the commit status call throws", as
   assert.ok(errors.mock.callCount() >= 1);
   deps.queue.close();
 });
+
+test("POST /gate/check rejects a request for a different engineer", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "awake", since: new Date("2026-03-24T08:00:00Z") };
+  const deps = makeDeps(tracker);
+  const handler = createHandler(deps);
+
+  const body = (engineer: unknown) =>
+    JSON.stringify({ ...JSON.parse(validBody), engineer });
+  assert.deepStrictEqual((await handler(gateCheck(body("alice")))).status, 400);
+  assert.deepStrictEqual((await handler(gateCheck(body(7)))).status, 400);
+  assert.deepStrictEqual((await handler(gateCheck(body("vlad")))).status, 200);
+  assert.deepStrictEqual((await handler(gateCheck(body("")))).status, 200);
+  deps.queue.close();
+});

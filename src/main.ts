@@ -30,6 +30,8 @@ interface GateCheckRequest {
   branch: string;
   sha: string;
   workflow_run_id: string;
+  /** Engineer the caller expects to gate on; must match the service's. */
+  engineer?: string;
   override_by?: string;
 }
 
@@ -54,14 +56,17 @@ function parseGateCheck(body: unknown): GateCheckRequest | string {
       return `Field "${field}" must be a non-empty string`;
     }
   }
-  if (b.override_by !== undefined && typeof b.override_by !== "string") {
-    return `Field "override_by" must be a string`;
+  for (const field of ["engineer", "override_by"] as const) {
+    if (b[field] !== undefined && typeof b[field] !== "string") {
+      return `Field "${field}" must be a string`;
+    }
   }
   return {
     repo: b.repo as string,
     branch: b.branch as string,
     sha: b.sha as string,
     workflow_run_id: b.workflow_run_id as string,
+    engineer: (b.engineer as string | undefined) || undefined,
     override_by: (b.override_by as string | undefined) || undefined,
   };
 }
@@ -107,6 +112,14 @@ export function createHandler(
       const parsed = parseGateCheck(body);
       if (typeof parsed === "string") {
         return json({ error: parsed }, 400);
+      }
+      if (parsed.engineer && parsed.engineer !== engineer) {
+        return json(
+          {
+            error: `This Reverie service gates on "${engineer}", not "${parsed.engineer}"`,
+          },
+          400,
+        );
       }
       const { repo, branch, sha, workflow_run_id, override_by } = parsed;
 
