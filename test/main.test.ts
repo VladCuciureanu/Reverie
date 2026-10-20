@@ -355,3 +355,30 @@ test("GET /status rejects missing or wrong token with 401", async () => {
   }
   deps.queue.close();
 });
+
+test("startService serves the handler over HTTP", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = makeDeps(tracker);
+  const watcher = { start: () => {}, stop: () => {} };
+  const service = startService(deps, { port: 0, watcher });
+  await new Promise((resolve) => service.server.once("listening", resolve));
+  const { port } = service.server.address() as { port: number };
+  const base = `http://localhost:${port}`;
+
+  const status = await fetch(`${base}/status`, { headers: AUTH });
+  assert.deepStrictEqual(status.status, 200);
+  assert.deepStrictEqual((await status.json()).sleep_state, "rem");
+
+  const check = await fetch(`${base}/gate/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...AUTH },
+    body: validBody,
+  });
+  assert.deepStrictEqual(check.status, 423);
+  assert.deepStrictEqual(check.headers.get("content-type"), "application/json");
+  assert.deepStrictEqual(deps.queue.count(), 1);
+
+  await service.close();
+  deps.queue.close();
+});

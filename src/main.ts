@@ -140,30 +140,23 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
   };
 }
 
-/** Adapts a Fetch-style handler to node:http (replacement for Deno.serve). */
+/** Adapts a Fetch-style handler to node:http. */
 function toNodeListener(
   handler: (req: Request) => Promise<Response>,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     try {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (Array.isArray(value)) {
-          for (const v of value) headers.append(key, v);
-        } else if (value !== undefined) {
-          headers.set(key, value);
-        }
-      }
       const hasBody = req.method !== "GET" && req.method !== "HEAD";
-      const request = new Request(url, {
-        method: req.method,
-        headers,
-        body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
-        duplex: hasBody ? "half" : undefined,
-      } as RequestInit);
-
-      const response = await handler(request);
+      const response = await handler(
+        new Request(new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`), {
+          method: req.method,
+          headers: Object.entries(req.headersDistinct).flatMap(([name, values]) =>
+            (values ?? []).map((value): [string, string] => [name, value]),
+          ),
+          body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
+          duplex: "half",
+        } as RequestInit),
+      );
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch (err) {
@@ -174,7 +167,8 @@ function toNodeListener(
   };
 }
 
-export interface Watcher {
+/** What startService needs from the wake watcher; tests substitute a fake. */
+interface Watcher {
   start(): void;
   stop(): void;
 }
