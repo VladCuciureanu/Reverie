@@ -32,15 +32,23 @@ export class DeployQueue {
     sha: string,
     workflowRunId: string,
   ): void {
-    // Supersede earlier deploys on the same repo+branch
-    this.db
-      .prepare("DELETE FROM deploy_queue WHERE repo = ? AND branch = ?")
-      .run(repo, branch);
-    this.db
-      .prepare(
-        "INSERT INTO deploy_queue (repo, branch, sha, workflow_run_id) VALUES (?, ?, ?, ?)",
-      )
-      .run(repo, branch, sha, workflowRunId);
+    // Supersede earlier deploys on the same repo+branch, atomically so a
+    // failed insert never loses the previously queued deploy.
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare("DELETE FROM deploy_queue WHERE repo = ? AND branch = ?")
+        .run(repo, branch);
+      this.db
+        .prepare(
+          "INSERT INTO deploy_queue (repo, branch, sha, workflow_run_id) VALUES (?, ?, ?, ?)",
+        )
+        .run(repo, branch, sha, workflowRunId);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   peek(): QueuedDeploy[] {

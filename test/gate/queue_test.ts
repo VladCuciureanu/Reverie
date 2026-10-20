@@ -61,3 +61,15 @@ test("count returns number of queued deploys", () => {
     assert.deepStrictEqual(queue.count(), 2);
   });
 });
+
+test("enqueue keeps the earlier deploy if the insert fails", () => {
+  withQueue((queue) => {
+    queue.enqueue("org/repo", "main", "abc123", "run-1");
+    assert.throws(() =>
+      queue.enqueue("org/repo", "main", null as unknown as string, "run-2"),
+    );
+    const items = queue.peek();
+    assert.deepStrictEqual(items.length, 1);
+    assert.deepStrictEqual(items[0].sha, "abc123");
+  });
+});
