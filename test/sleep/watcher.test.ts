@@ -19,8 +19,8 @@ interface Call {
   body?: string;
 }
 
-/** Fake GitHub API: run lookups return workflow 4242; dispatches return 204. */
-function githubFetch(calls: Call[] = [], runStatus = 200): typeof fetch {
+/** Fake GitHub API: run lookups return workflow 4242; dispatches return 204 by default. */
+function githubFetch(calls: Call[] = [], runStatus = 200, dispatchStatus = 204): typeof fetch {
   return ((input: string | URL | Request, init?: RequestInit) => {
     const url = input.toString();
     const method = init?.method ?? "GET";
@@ -34,18 +34,18 @@ function githubFetch(calls: Call[] = [], runStatus = 200): typeof fetch {
       );
     }
     if (url.endsWith("/dispatches")) {
-      return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(null, { status: dispatchStatus }));
     }
     return Promise.resolve(new Response(null, { status: 201 }));
   }) as typeof fetch;
 }
 
-function setup(calls: Call[] = [], runStatus = 200) {
+function setup(calls: Call[] = [], runStatus = 200, dispatchStatus = 204) {
   const tracker = new ControllableTracker();
   const queue = new DeployQueue(":memory:");
   const github = new GitHubClient({
     token: "test",
-    fetchFn: githubFetch(calls, runStatus),
+    fetchFn: githubFetch(calls, runStatus, dispatchStatus),
   });
   return { tracker, queue, github };
 }
@@ -167,6 +167,24 @@ test("keeps deploy queued when the run's workflow can't be resolved", async () =
   assert.deepStrictEqual(await watcher.poll(), 0);
   assert.deepStrictEqual(queue.count(), 1);
   assert.ok(!calls.some((c) => c.url.endsWith("/dispatches")));
+
+  queue.close();
+});
+
+test("keeps deploy queued and posts no success status when the dispatch fails", async () => {
+  const calls: Call[] = [];
+  const { tracker, queue, github } = setup(calls, 200, 500);
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  tracker.status = { state: "rem", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "987654");
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+  assert.deepStrictEqual(calls.filter((c) => c.url.endsWith("/dispatches")).length, 1);
+  assert.ok(!calls.some((c) => c.url.includes("/statuses/")));
 
   queue.close();
 });
