@@ -8,7 +8,7 @@ function capturingFetch(status: number): {
 } {
   const calls: { url: string; init: RequestInit }[] = [];
   const fetchFn = (input: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: input.toString(), init: init! });
+    calls.push({ url: input.toString(), init: init ?? {} });
     return Promise.resolve(new Response(null, { status }));
   };
   return { fetchFn: fetchFn as typeof fetch, calls };
