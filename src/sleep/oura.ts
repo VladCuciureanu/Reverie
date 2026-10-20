@@ -87,10 +87,7 @@ export class OuraTracker implements SleepTracker {
  * Reads the stage at `now` from the session's 5-minute phase string. Returns
  * null when there is no phase data for the current offset (unknown state).
  */
-function currentPhase(
-  session: OuraSleepSession,
-  now: Date,
-): SleepStatus | null {
+function currentPhase(session: OuraSleepSession, now: Date): SleepStatus | null {
   const phases = session.sleep_phase_5_min ?? "";
   const start = new Date(session.bedtime_start).getTime();
   const index = Math.floor((now.getTime() - start) / PHASE_MS);

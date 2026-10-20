@@ -70,8 +70,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - uses: VladCuciureanu/Reverie@main
@@ -159,8 +159,9 @@ interface SleepTracker {
 
 ```bash
 npm run dev        # start with --watch
-npm test           # node --test, test/**/*_test.ts
+npm test           # node --test, test/**/*.test.ts
 npm run typecheck  # tsc, no emit
 npm run lint       # biome lint
-npm run format     # biome format --write
+npm run format     # biome check --write (format, sort imports, safe fixes)
+npm run check      # biome check, typecheck and tests, as CI runs them
 ```

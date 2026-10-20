@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { SleepStateCache } from "../../src/sleep/state.ts";
 import type { SleepTracker } from "../../src/sleep/tracker.ts";
 import type { SleepStatus } from "../../src/sleep/types.ts";

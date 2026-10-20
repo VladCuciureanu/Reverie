@@ -14,10 +14,7 @@ export class SleepStateCache implements SleepTracker {
   private ttlMs: number;
   private now: () => number;
 
-  constructor(
-    tracker: SleepTracker,
-    options?: { ttlMs?: number; now?: () => number },
-  ) {
+  constructor(tracker: SleepTracker, options?: { ttlMs?: number; now?: () => number }) {
     this.tracker = tracker;
     this.ttlMs = options?.ttlMs ?? DEFAULT_TTL_MS;
     this.now = options?.now ?? Date.now;

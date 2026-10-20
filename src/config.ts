@@ -52,12 +52,8 @@ export function parseConfig(yaml: string): ReverieConfig {
   const rawGate = (raw.gate ?? {}) as Record<string, unknown>;
 
   const gate: GateConfig = {
-    block_on: rawGate.block_on
-      ? validateSleepStates(rawGate.block_on)
-      : DEFAULT_GATE.block_on,
-    allow_on: rawGate.allow_on
-      ? validateSleepStates(rawGate.allow_on)
-      : DEFAULT_GATE.allow_on,
+    block_on: rawGate.block_on ? validateSleepStates(rawGate.block_on) : DEFAULT_GATE.block_on,
+    allow_on: rawGate.allow_on ? validateSleepStates(rawGate.allow_on) : DEFAULT_GATE.allow_on,
     fallback: rawGate.fallback === "allow" ? "allow" : DEFAULT_GATE.fallback,
     timeout_minutes:
       typeof rawGate.timeout_minutes === "number"

@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { DeployQueue } from "../../src/gate/queue.ts";
 
 function withQueue(fn: (queue: DeployQueue) => void) {
@@ -65,9 +65,7 @@ test("count returns number of queued deploys", () => {
 test("enqueue keeps the earlier deploy if the insert fails", () => {
   withQueue((queue) => {
     queue.enqueue("org/repo", "main", "abc123", "run-1");
-    assert.throws(() =>
-      queue.enqueue("org/repo", "main", null as unknown as string, "run-2"),
-    );
+    assert.throws(() => queue.enqueue("org/repo", "main", null as unknown as string, "run-2"));
     const items = queue.peek();
     assert.deepStrictEqual(items.length, 1);
     assert.deepStrictEqual(items[0].sha, "abc123");

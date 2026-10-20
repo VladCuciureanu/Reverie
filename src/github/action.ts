@@ -58,9 +58,7 @@ export async function runAction(
     if (typeof parsed !== "object" || parsed === null) throw new Error();
     result = parsed as Record<string, unknown>;
   } catch {
-    return failure(
-      `Reverie returned HTTP ${response.status} with a non-JSON body`,
-    );
+    return failure(`Reverie returned HTTP ${response.status} with a non-JSON body`);
   }
 
   const reason =
@@ -69,8 +67,7 @@ export async function runAction(
       : typeof result.error === "string"
         ? result.error
         : `Reverie returned HTTP ${response.status}`;
-  const sleepState =
-    typeof result.sleep_state === "string" ? result.sleep_state : "unknown";
+  const sleepState = typeof result.sleep_state === "string" ? result.sleep_state : "unknown";
 
   // 200 means allowed, 423 means blocked; any other status is an error.
   if (response.ok && result.allowed === true) {

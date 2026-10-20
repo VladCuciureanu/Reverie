@@ -1,6 +1,6 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { test } from "node:test";
 import { OuraTracker } from "../../src/sleep/oura.ts";
 
 /**
@@ -11,11 +11,7 @@ const fixture = JSON.parse(
   readFileSync(new URL("./fixtures/oura_sleep.json", import.meta.url), "utf8"),
 );
 
-function mockFetch(
-  body: unknown,
-  status = 200,
-  urls: string[] = [],
-): typeof fetch {
+function mockFetch(body: unknown, status = 200, urls: string[] = []): typeof fetch {
   return ((input: string | URL | Request) => {
     urls.push(input.toString());
     return Promise.resolve(
@@ -87,13 +83,9 @@ test("returns awake once the latest session has ended", async () => {
 test("returns null when the phase data doesn't reach the current time", async () => {
   const [session] = fixture.data;
   const partial = {
-    data: [
-      { ...session, sleep_phase_5_min: session.sleep_phase_5_min.slice(0, 12) },
-    ],
+    data: [{ ...session, sleep_phase_5_min: session.sleep_phase_5_min.slice(0, 12) }],
   };
-  const status = await trackerAt("2026-03-24T03:00:00Z", partial).getStatus(
-    "vlad",
-  );
+  const status = await trackerAt("2026-03-24T03:00:00Z", partial).getStatus("vlad");
   assert.deepStrictEqual(status, null);
 });
 

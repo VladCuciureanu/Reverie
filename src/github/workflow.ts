@@ -19,10 +19,7 @@ export class GitHubClient {
    * Looks up the workflow that produced a run. Returns the workflow ID
    * (usable with the workflow_dispatch API), or null if the run can't be read.
    */
-  async getWorkflowIdForRun(
-    repo: string,
-    runId: string,
-  ): Promise<string | null> {
+  async getWorkflowIdForRun(repo: string, runId: string): Promise<string | null> {
     const url = `${this.baseUrl}/repos/${repo}/actions/runs/${runId}`;
     const response = await this.fetchFn(url, {
       method: "GET",
@@ -34,17 +31,12 @@ export class GitHubClient {
     if (response.status !== 200) return null;
 
     const run = (await response.json()) as { workflow_id?: unknown };
-    return typeof run.workflow_id === "number" ||
-      typeof run.workflow_id === "string"
+    return typeof run.workflow_id === "number" || typeof run.workflow_id === "string"
       ? String(run.workflow_id)
       : null;
   }
 
-  async retriggerWorkflow(
-    repo: string,
-    workflowId: string,
-    ref: string,
-  ): Promise<boolean> {
+  async retriggerWorkflow(repo: string, workflowId: string, ref: string): Promise<boolean> {
     const url = `${this.baseUrl}/repos/${repo}/actions/workflows/${workflowId}/dispatches`;
     const response = await this.fetchFn(url, {
       method: "POST",

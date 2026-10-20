@@ -1,6 +1,6 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runAction, type ActionInputs } from "../../src/github/action.ts";
+import { test } from "node:test";
+import { type ActionInputs, runAction } from "../../src/github/action.ts";
 
 const baseInputs: ActionInputs = {
   reverieUrl: "http://localhost:8000",
@@ -69,10 +69,7 @@ test("action passes override_by when provided", async () => {
     );
   };
 
-  const result = await runAction(
-    { ...baseInputs, overrideBy: "alice" },
-    fetchFn as typeof fetch,
-  );
+  const result = await runAction({ ...baseInputs, overrideBy: "alice" }, fetchFn as typeof fetch);
   assert.deepStrictEqual(result.allowed, true);
   const parsed = JSON.parse(capturedBody);
   assert.deepStrictEqual(parsed.override_by, "alice");
@@ -83,10 +80,10 @@ test("action sends the bearer token", async () => {
   const fetchFn = (_input: string | URL | Request, init?: RequestInit) => {
     capturedHeaders = new Headers(init?.headers);
     return Promise.resolve(
-      new Response(
-        JSON.stringify({ allowed: true, reason: "ok", sleep_state: "awake" }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+      new Response(JSON.stringify({ allowed: true, reason: "ok", sleep_state: "awake" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
   };
 
@@ -95,10 +92,7 @@ test("action sends the bearer token", async () => {
 });
 
 test("action fails when the service rejects the request", async () => {
-  const result = await runAction(
-    baseInputs,
-    mockFetch({ error: "Unauthorized" }, 401),
-  );
+  const result = await runAction(baseInputs, mockFetch({ error: "Unauthorized" }, 401));
   assert.deepStrictEqual(result.exitCode, 1);
   assert.deepStrictEqual(result.reason, "Unauthorized");
 });
@@ -108,10 +102,10 @@ test("action sends the engineer", async () => {
   const fetchFn = (_input: string | URL | Request, init?: RequestInit) => {
     capturedBody = init?.body as string;
     return Promise.resolve(
-      new Response(
-        JSON.stringify({ allowed: true, reason: "ok", sleep_state: "awake" }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+      new Response(JSON.stringify({ allowed: true, reason: "ok", sleep_state: "awake" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
   };
 
@@ -127,9 +121,7 @@ test("action fails on an error status even if the body says allowed", async () =
 
 test("action fails cleanly on a non-JSON response", async () => {
   const fetchFn = (() =>
-    Promise.resolve(
-      new Response("<html>Bad Gateway</html>", { status: 502 }),
-    )) as typeof fetch;
+    Promise.resolve(new Response("<html>Bad Gateway</html>", { status: 502 }))) as typeof fetch;
   const result = await runAction(baseInputs, fetchFn);
   assert.deepStrictEqual(result.exitCode, 1);
   assert.deepStrictEqual(result.allowed, false);
@@ -137,8 +129,7 @@ test("action fails cleanly on a non-JSON response", async () => {
 });
 
 test("action fails cleanly when the service is unreachable", async () => {
-  const fetchFn = (() =>
-    Promise.reject(new TypeError("fetch failed"))) as typeof fetch;
+  const fetchFn = (() => Promise.reject(new TypeError("fetch failed"))) as typeof fetch;
   const result = await runAction(baseInputs, fetchFn);
   assert.deepStrictEqual(result.exitCode, 1);
   assert.match(result.reason, /fetch failed/);

@@ -1,10 +1,10 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WakeWatcher } from "../../src/sleep/watcher.ts";
-import type { SleepTracker } from "../../src/sleep/tracker.ts";
-import type { SleepStatus } from "../../src/sleep/types.ts";
+import { test } from "node:test";
 import { DeployQueue } from "../../src/gate/queue.ts";
 import { GitHubClient } from "../../src/github/workflow.ts";
+import type { SleepTracker } from "../../src/sleep/tracker.ts";
+import type { SleepStatus } from "../../src/sleep/types.ts";
+import { WakeWatcher } from "../../src/sleep/watcher.ts";
 
 class ControllableTracker implements SleepTracker {
   status: SleepStatus | null = null;
@@ -140,10 +140,7 @@ test("dispatches the run's workflow ID, not the run ID", async () => {
   assert.deepStrictEqual(await watcher.poll(), 1);
 
   assert.deepStrictEqual(calls[0].method, "GET");
-  assert.deepStrictEqual(
-    calls[0].url,
-    "https://api.github.com/repos/org/repo/actions/runs/987654",
-  );
+  assert.deepStrictEqual(calls[0].url, "https://api.github.com/repos/org/repo/actions/runs/987654");
   const dispatch = calls.find((c) => c.url.endsWith("/dispatches"));
   assert.ok(dispatch);
   assert.deepStrictEqual(
@@ -204,10 +201,7 @@ test("fails and drops deploys queued longer than timeoutMinutes", async () => {
   await watcher.poll();
   assert.deepStrictEqual(queue.count(), 0);
   assert.deepStrictEqual(calls.length, 1);
-  assert.deepStrictEqual(
-    calls[0].url,
-    "https://api.github.com/repos/org/repo/statuses/abc123",
-  );
+  assert.deepStrictEqual(calls[0].url, "https://api.github.com/repos/org/repo/statuses/abc123");
   assert.deepStrictEqual(JSON.parse(calls[0].body ?? "").state, "failure");
 
   queue.close();

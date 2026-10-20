@@ -1,7 +1,7 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkGate } from "../../src/gate/gate.ts";
+import { test } from "node:test";
 import type { GateConfig } from "../../src/config.ts";
+import { checkGate } from "../../src/gate/gate.ts";
 import type { SleepStatus } from "../../src/sleep/types.ts";
 
 const defaultGate: GateConfig = {
