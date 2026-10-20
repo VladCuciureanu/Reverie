@@ -339,3 +339,40 @@ test("an unknown stage that blocks still closes the gate for the next wake", asy
 
   queue.close();
 });
+
+test("dequeues a dispatched deploy even if posting its commit status fails", async () => {
+  const calls: Call[] = [];
+  const base = githubFetch(calls);
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) =>
+    input.toString().includes("/statuses/")
+      ? Promise.reject(new Error("network down"))
+      : base(input, init)) as typeof fetch;
+  const tracker = new ControllableTracker();
+  const queue = new DeployQueue(":memory:");
+  const github = new GitHubClient({ token: "test", fetchFn });
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  const errors: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    tracker.status = { state: "deep", since: new Date() };
+    await watcher.poll();
+    queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 1);
+    assert.deepStrictEqual(queue.count(), 0);
+    assert.deepStrictEqual(errors.length, 1);
+
+    // The next wake must not dispatch it again.
+    tracker.status = { state: "deep", since: new Date() };
+    await watcher.poll();
+    tracker.status = { state: "awake", since: new Date() };
+    assert.deepStrictEqual(await watcher.poll(), 0);
+    assert.deepStrictEqual(calls.filter((c) => c.url.endsWith("/dispatches")).length, 1);
+  } finally {
+    console.error = originalError;
+    queue.close();
+  }
+});

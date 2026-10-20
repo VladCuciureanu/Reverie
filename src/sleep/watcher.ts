@@ -92,15 +92,21 @@ export class WakeWatcher {
       if (workflowId === null) continue;
 
       const ok = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
-      if (ok) {
+      if (!ok) continue;
+
+      // Dequeue as soon as the dispatch succeeds, so a failed status post
+      // can't get the deploy dispatched again on the next wake.
+      this.queue.remove(deploy.id);
+      drained++;
+      try {
         await this.github.postCommitStatus(
           deploy.repo,
           deploy.sha,
           "success",
           "Engineer is awake. Deploy re-triggered.",
         );
-        this.queue.remove(deploy.id);
-        drained++;
+      } catch (err) {
+        console.error("Failed to post re-trigger commit status:", err);
       }
     }
 
