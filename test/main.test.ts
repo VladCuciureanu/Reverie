@@ -56,7 +56,7 @@ test("GET /status returns sleep state and gate decision", async () => {
   const deps = makeDeps(tracker);
   const handler = createHandler(deps);
 
-  const res = await handler(new Request("http://localhost/status"));
+  const res = await handler(new Request("http://localhost/status", { headers: AUTH }));
   assert.deepStrictEqual(res.status, 200);
   const body = await res.json();
   assert.deepStrictEqual(body.engineer, "vlad");
@@ -340,4 +340,18 @@ test("the service exits 1 with a one-line error when a required variable is miss
   });
   assert.deepStrictEqual(result.status, 1);
   assert.deepStrictEqual(result.stderr, "reverie: OURA_TOKEN must be set\n");
+});
+
+test("GET /status rejects missing or wrong token with 401", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = makeDeps(tracker);
+  const handler = createHandler(deps);
+
+  for (const headers of [{}, { Authorization: "Bearer wrong" }] as Record<string, string>[]) {
+    const res = await handler(new Request("http://localhost/status", { headers }));
+    assert.deepStrictEqual(res.status, 401);
+    assert.deepStrictEqual(await res.json(), { error: "Unauthorized" });
+  }
+  deps.queue.close();
 });

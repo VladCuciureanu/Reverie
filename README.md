@@ -23,7 +23,7 @@ REVERIE_ENGINEER=vlad OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(opens
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on `POST /gate/check`. |
+| `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on every endpoint. |
 | `OURA_TOKEN` | Yes | | Oura API personal access token |
 | `GITHUB_TOKEN` | Yes | | Used to post commit statuses and dispatch queued workflows |
 | `REVERIE_ENGINEER` | If not in the config file | `engineer` from the config file | Engineer the service gates on. Takes precedence over the config file; the service exits if neither sets it. |
@@ -108,7 +108,9 @@ This repository's [`deploy.yml`](.github/workflows/deploy.yml) is a working exam
 
 ## HTTP API
 
-`GET /status` (no auth):
+Both endpoints require `Authorization: Bearer $REVERIE_API_TOKEN` and return `401` with `{"error": "Unauthorized"}` without it. Other paths return `404`.
+
+`GET /status`:
 
 ```json
 {
@@ -122,7 +124,7 @@ This repository's [`deploy.yml`](.github/workflows/deploy.yml) is a working exam
 
 `sleep_state` is `unknown` and `since` is `null` when the stage can't be determined: the Oura request failed or there is no phase data for the current time.
 
-`POST /gate/check` requires `Authorization: Bearer $REVERIE_API_TOKEN` (`401` otherwise):
+`POST /gate/check`:
 
 ```json
 {

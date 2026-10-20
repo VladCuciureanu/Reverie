@@ -81,8 +81,15 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    const route = `${req.method} ${url.pathname}`;
+    if (route !== "GET /status" && route !== "POST /gate/check") {
+      return json({ error: "Not found" }, 404);
+    }
+    if (!isAuthorized(req, apiToken)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
 
-    if (req.method === "GET" && url.pathname === "/status") {
+    if (route === "GET /status") {
       const status = await sleepCache.getStatus(engineer);
       const gateResult = checkGate(status, gateConfig);
       return json({
@@ -94,49 +101,41 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
       });
     }
 
-    if (req.method === "POST" && url.pathname === "/gate/check") {
-      if (!isAuthorized(req, apiToken)) {
-        return json({ error: "Unauthorized" }, 401);
-      }
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "Request body must be valid JSON" }, 400);
+    }
+    const parsed = parseGateCheck(body);
+    if (typeof parsed === "string") {
+      return json({ error: parsed }, 400);
+    }
+    if (parsed.engineer && parsed.engineer !== engineer) {
+      return json(
+        {
+          error: `This Reverie service gates on "${engineer}", not "${parsed.engineer}"`,
+        },
+        400,
+      );
+    }
+    const { repo, branch, sha, workflow_run_id, override_by } = parsed;
 
-      let body: unknown;
+    const status = await sleepCache.getStatus(engineer);
+    const result = checkGate(status, gateConfig, override_by);
+
+    if (!result.allowed) {
+      queue.enqueue(repo, branch, sha, workflow_run_id);
+      // The deploy is already queued; a failed status update is cosmetic
+      // and must not turn the 423 into a 500.
       try {
-        body = await req.json();
-      } catch {
-        return json({ error: "Request body must be valid JSON" }, 400);
+        await github.postCommitStatus(repo, sha, "pending", `Deploy queued: ${result.reason}`);
+      } catch (err) {
+        console.error("Failed to post pending commit status:", err);
       }
-      const parsed = parseGateCheck(body);
-      if (typeof parsed === "string") {
-        return json({ error: parsed }, 400);
-      }
-      if (parsed.engineer && parsed.engineer !== engineer) {
-        return json(
-          {
-            error: `This Reverie service gates on "${engineer}", not "${parsed.engineer}"`,
-          },
-          400,
-        );
-      }
-      const { repo, branch, sha, workflow_run_id, override_by } = parsed;
-
-      const status = await sleepCache.getStatus(engineer);
-      const result = checkGate(status, gateConfig, override_by);
-
-      if (!result.allowed) {
-        queue.enqueue(repo, branch, sha, workflow_run_id);
-        // The deploy is already queued; a failed status update is cosmetic
-        // and must not turn the 423 into a 500.
-        try {
-          await github.postCommitStatus(repo, sha, "pending", `Deploy queued: ${result.reason}`);
-        } catch (err) {
-          console.error("Failed to post pending commit status:", err);
-        }
-      }
-
-      return json(result, result.allowed ? 200 : 423);
     }
 
-    return json({ error: "Not found" }, 404);
+    return json(result, result.allowed ? 200 : 423);
   };
 }
 
