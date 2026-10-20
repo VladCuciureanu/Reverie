@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseConfig } from "../src/config.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_GATE, loadConfig, parseConfig } from "../src/config.ts";
 
 test("parses valid full config", () => {
   const yaml = `
@@ -66,4 +69,36 @@ gate:
 `;
   const config = parseConfig(yaml);
   assert.deepStrictEqual(config.gate.fallback, "allow");
+});
+
+test("loadConfig reads and parses a config file", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, ".reverie.yml");
+  writeFileSync(
+    path,
+    "sleep_tracker: oura\nengineer: vlad\ngate:\n  fallback: allow\n  timeout_minutes: 60\n",
+  );
+
+  const config = loadConfig(path);
+  assert.deepStrictEqual(config?.engineer, "vlad");
+  assert.deepStrictEqual(config?.gate.fallback, "allow");
+  assert.deepStrictEqual(config?.gate.timeout_minutes, 60);
+  assert.deepStrictEqual(config?.gate.block_on, DEFAULT_GATE.block_on);
+});
+
+test("loadConfig returns null when the file is absent", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.deepStrictEqual(loadConfig(join(dir, "missing.yml")), null);
+});
+
+test("loadConfig throws on an invalid file", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, ".reverie.yml");
+  writeFileSync(path, "engineer: vlad\n");
+  assert.throws(() => loadConfig(path), {
+    message: "Missing required field: sleep_tracker",
+  });
 });

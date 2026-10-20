@@ -12,7 +12,8 @@ import { DeployQueue } from "./gate/queue.ts";
 import { GitHubClient } from "./github/workflow.ts";
 import { WakeWatcher } from "./sleep/watcher.ts";
 import type { SleepTracker } from "./sleep/tracker.ts";
-import type { GateConfig } from "./config.ts";
+import { DEFAULT_GATE, loadConfig } from "./config.ts";
+import type { GateConfig, ReverieConfig } from "./config.ts";
 
 export interface ServerDeps {
   sleepCache: SleepTracker;
@@ -238,9 +239,25 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
+  const configPath = process.env.REVERIE_CONFIG ?? ".reverie.yml";
+  let config: ReverieConfig | null;
+  try {
+    config = loadConfig(configPath);
+  } catch (err) {
+    console.error(`Invalid config ${configPath}: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  if (!config) {
+    console.log(`No config at ${configPath}; using default gate settings`);
+  } else if (config.sleep_tracker !== "oura") {
+    console.error(`Unsupported sleep_tracker: ${config.sleep_tracker}`);
+    process.exit(1);
+  }
+
   const ouraToken = process.env.OURA_TOKEN ?? "";
   const ghToken = process.env.GITHUB_TOKEN ?? "";
-  const engineerName = process.env.REVERIE_ENGINEER ?? "engineer";
+  const engineerName =
+    process.env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer";
   const port = Number(process.env.PORT ?? "8000");
   const dbPath = process.env.REVERIE_DB ?? "reverie.db";
   const apiToken = process.env.REVERIE_API_TOKEN ?? "";
@@ -254,12 +271,7 @@ if (
   const queue = new DeployQueue(dbPath);
   const github = new GitHubClient({ token: ghToken });
 
-  const gateConfig: GateConfig = {
-    block_on: ["deep", "rem"],
-    allow_on: ["awake", "light"],
-    fallback: "block",
-    timeout_minutes: 480,
-  };
+  const gateConfig: GateConfig = config?.gate ?? DEFAULT_GATE;
 
   const service = startService(
     {

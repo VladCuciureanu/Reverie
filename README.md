@@ -25,12 +25,15 @@ export REVERIE_ENGINEER="vlad"
 export REVERIE_API_TOKEN="$(openssl rand -hex 32)" # shared secret for /gate/check
 export PORT=8000               # optional, defaults to 8000
 export REVERIE_DB="reverie.db" # optional, defaults to reverie.db
+export REVERIE_CONFIG=".reverie.yml" # optional, defaults to ./.reverie.yml
 
 npm install
 npm start
 ```
 
-### 2. Add `.reverie.yml` to your repo
+### 2. Configure the gate with `.reverie.yml`
+
+The service reads `.reverie.yml` from its working directory (override the path with `REVERIE_CONFIG`). If the file is absent, the defaults below apply; an invalid file stops the service from starting.
 
 ```yaml
 sleep_tracker: oura
@@ -78,12 +81,12 @@ jobs:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `sleep_tracker` | string | — | Tracker adapter name (e.g. `oura`) |
-| `engineer` | string | — | Engineer identifier |
+| `sleep_tracker` | string | — | Tracker adapter name (only `oura` is supported) |
+| `engineer` | string | — | Engineer identifier (`REVERIE_ENGINEER` takes precedence) |
 | `gate.block_on` | string[] | `[deep, rem]` | Sleep stages that block deploys |
-| `gate.allow_on` | string[] | `[awake, light]` | Sleep stages that allow deploys |
+| `gate.allow_on` | string[] | `[awake, light]` | Sleep stages that allow deploys. Stages in neither `block_on` nor `allow_on` use `fallback`; `block_on` wins if a stage is in both |
 | `gate.fallback` | string | `block` | Behavior when sleep state is unknown: `block` or `allow` |
-| `gate.timeout_minutes` | number | `480` | Max minutes to hold a deploy before failing |
+| `gate.timeout_minutes` | number | `480` | Max minutes a deploy stays queued; after that it is dropped and its commit status set to `failure` |
 
 ## API
 
@@ -154,10 +157,11 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 |---|---|---|
 | `OURA_TOKEN` | Yes | Oura Ring API personal access token |
 | `GITHUB_TOKEN` | Yes | GitHub App token for commit statuses and workflow dispatch |
-| `REVERIE_ENGINEER` | Yes | Engineer identifier (must match config) |
+| `REVERIE_ENGINEER` | No | Engineer identifier; overrides `engineer` in `.reverie.yml` (default: config value, else `engineer`). The action's `engineer` input must match it. |
 | `REVERIE_API_TOKEN` | Yes | Shared secret required as `Authorization: Bearer <token>` on `POST /gate/check`. Store the same value as the `REVERIE_API_TOKEN` repo secret and pass it to the action's `reverie_token` input. The service refuses to start without it. |
 | `PORT` | No | HTTP server port (default: `8000`) |
 | `REVERIE_DB` | No | SQLite database path (default: `reverie.db`) |
+| `REVERIE_CONFIG` | No | Path to the config file (default: `.reverie.yml`) |
 
 ## Project Structure
 
