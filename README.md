@@ -65,6 +65,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # the action runs TypeScript directly on Node 24+
+
       - name: Check sleep gate
         uses: reverie/gate@v1
         with:
@@ -76,6 +80,16 @@ jobs:
       - name: Deploy
         run: ./deploy.sh
 ```
+
+The gate step needs these repository settings (Settings → Secrets and variables → Actions):
+
+| Name | Kind | Description |
+|---|---|---|
+| `REVERIE_URL` | Secret | Base URL of your Reverie service, e.g. `https://reverie.example.com` |
+| `REVERIE_API_TOKEN` | Secret | Same value as the service's `REVERIE_API_TOKEN` |
+| `REVERIE_ENGINEER` | Variable | Engineer identifier (used by the example `deploy.yml`); must match the service's engineer |
+
+This repository's own [`deploy.yml`](.github/workflows/deploy.yml) is an example: when `REVERIE_URL` is not set it skips the gate with a notice instead of failing.
 
 ## Configuration Reference
 

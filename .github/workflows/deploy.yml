@@ -13,6 +13,9 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # Secrets can't be read in `if:` conditions, so expose it via env.
+      REVERIE_URL: ${{ secrets.REVERIE_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,10 +23,15 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Skip sleep gate (not configured)
+        if: env.REVERIE_URL == ''
+        run: echo "::notice title=Sleep gate skipped::REVERIE_URL secret is not set; deploying without the Reverie sleep gate."
+
       - name: Check sleep gate
+        if: env.REVERIE_URL != ''
         uses: ./
         with:
-          reverie_url: ${{ secrets.REVERIE_URL }}
+          reverie_url: ${{ env.REVERIE_URL }}
           reverie_token: ${{ secrets.REVERIE_API_TOKEN }}
           engineer: ${{ vars.REVERIE_ENGINEER }}
           override_by: ${{ github.event.inputs.override_by }}
