@@ -14,10 +14,18 @@ inputs:
     description: "Engineer overriding the sleep gate (optional)"
     required: false
     default: ""
+outputs:
+  allowed:
+    description: '"true" if the deploy may proceed, otherwise "false" (blocked or error)'
+    value: ${{ steps.gate.outputs.allowed }}
+  sleep_state:
+    description: "Sleep stage reported by the service (awake, light, deep, rem), or unknown"
+    value: ${{ steps.gate.outputs.sleep_state }}
 runs:
   using: "composite"
   steps:
     - name: Check sleep gate
+      id: gate
       shell: bash
       env:
         INPUT_REVERIE_URL: ${{ inputs.reverie_url }}

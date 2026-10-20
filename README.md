@@ -58,7 +58,7 @@ gate:
 
 ## Gating a workflow
 
-The action runs TypeScript with the runner's Node, so set up Node 26 first. The workflow needs a `workflow_dispatch` trigger, because that is how Reverie re-runs it.
+The action does not install Node: it runs its TypeScript source with whatever `node` is on the runner's `PATH`, which must be Node 26 or later. Add `actions/setup-node` with Node 26 before it, as below. The workflow needs a `workflow_dispatch` trigger, because that is how Reverie re-runs it.
 
 ```yaml
 on:
@@ -102,7 +102,21 @@ The step exits `0` when the deploy is allowed and `1` otherwise, and prints one 
 | Blocked (`423`) | `1` | `reverie: deploy blocked (sleep state: <state>): <reason> It is queued and will be re-run when the engineer wakes.` on stderr |
 | Error: any other status, a non-JSON body, or the service is unreachable | `1` | `reverie: gate check failed: <reason>` on stderr. Nothing is queued, so nothing will be re-run; fix the cause and re-run the workflow. |
 
-It has no outputs.
+| Output | Description |
+|---|---|
+| `allowed` | `true` if the deploy may proceed, otherwise `false` (blocked or error) |
+| `sleep_state` | `awake`, `light`, `deep` or `rem`; `unknown` when the stage can't be determined or the check failed |
+
+Because the step fails unless the deploy is allowed, a later step that reads the outputs after a block needs `if: always()` (or `continue-on-error: true` on the gate step), and the gate step needs an `id`:
+
+```yaml
+      - id: gate
+        uses: VladCuciureanu/Reverie@main
+        with:
+          reverie_url: ${{ secrets.REVERIE_URL }}  # and the other inputs above
+      - if: always() && steps.gate.outputs.allowed == 'false'
+        run: echo "Gate closed; engineer is ${{ steps.gate.outputs.sleep_state }}"
+```
 
 Repository settings (Settings → Secrets and variables → Actions):
 

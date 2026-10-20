@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { type ActionInputs, formatResult, runAction } from "../../src/github/action.ts";
+import {
+  type ActionInputs,
+  formatResult,
+  runAction,
+  writeOutputs,
+} from "../../src/github/action.ts";
 
 const baseInputs: ActionInputs = {
   reverieUrl: "http://localhost:8000",
@@ -183,4 +191,38 @@ test("output is plain ASCII on one line", async () => {
   for (const result of [allowed, blocked, error]) {
     assert.match(formatResult(result), /^[\x20-\x7e]+$/);
   }
+});
+
+function outputFile(t: { after: (fn: () => void) => void }): string {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "github_output");
+  writeFileSync(path, "earlier=1\n");
+  return path;
+}
+
+test("writeOutputs appends allowed and sleep_state", async (t) => {
+  const path = outputFile(t);
+  writeOutputs(path, await runAction(baseInputs, mockFetch(blockedBody, 423)));
+  assert.deepStrictEqual(readFileSync(path, "utf8"), "earlier=1\nallowed=false\nsleep_state=rem\n");
+
+  const allowed = await runAction(
+    baseInputs,
+    mockFetch({ allowed: true, reason: "ok", sleep_state: "awake" }),
+  );
+  writeOutputs(path, allowed);
+  assert.match(readFileSync(path, "utf8"), /allowed=true\nsleep_state=awake\n$/);
+});
+
+test("writeOutputs reports unknown for an unexpected sleep_state", async (t) => {
+  const path = outputFile(t);
+  const result = await runAction(
+    baseInputs,
+    mockFetch({ ...blockedBody, sleep_state: "rem\nallowed=true" }, 423),
+  );
+  writeOutputs(path, result);
+  assert.deepStrictEqual(
+    readFileSync(path, "utf8"),
+    "earlier=1\nallowed=false\nsleep_state=unknown\n",
+  );
 });

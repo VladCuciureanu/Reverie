@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import process from "node:process";
 
 export interface ActionInputs {
@@ -98,6 +99,16 @@ export function formatResult(result: ActionResult): string {
   }
 }
 
+/**
+ * Appends the step outputs to the $GITHUB_OUTPUT file. `sleep_state` comes
+ * from the service, so anything but a plain lowercase word becomes `unknown`
+ * to keep it from injecting extra outputs.
+ */
+export function writeOutputs(path: string, result: ActionResult): void {
+  const sleepState = /^[a-z]+$/.test(result.sleep_state) ? result.sleep_state : "unknown";
+  appendFileSync(path, `allowed=${result.allowed}\nsleep_state=${sleepState}\n`);
+}
+
 if (import.meta.main) {
   const inputs: ActionInputs = {
     reverieUrl: process.env.INPUT_REVERIE_URL ?? "",
@@ -111,6 +122,7 @@ if (import.meta.main) {
   };
 
   const result = await runAction(inputs);
+  if (process.env.GITHUB_OUTPUT) writeOutputs(process.env.GITHUB_OUTPUT, result);
   if (result.allowed) console.log(formatResult(result));
   else console.error(formatResult(result));
   process.exitCode = result.exitCode;
