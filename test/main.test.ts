@@ -1,11 +1,11 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHandler, startService, type ServerDeps } from "../src/main.ts";
-import { WakeWatcher } from "../src/sleep/watcher.ts";
-import type { SleepTracker } from "../src/sleep/tracker.ts";
-import type { SleepStatus } from "../src/sleep/types.ts";
+import { test } from "node:test";
 import { DeployQueue } from "../src/gate/queue.ts";
 import { GitHubClient } from "../src/github/workflow.ts";
+import { createHandler, type ServerDeps, startService } from "../src/main.ts";
+import type { SleepTracker } from "../src/sleep/tracker.ts";
+import type { SleepStatus } from "../src/sleep/types.ts";
+import { WakeWatcher } from "../src/sleep/watcher.ts";
 
 class StubTracker implements SleepTracker {
   status: SleepStatus | null = null;
@@ -15,8 +15,7 @@ class StubTracker implements SleepTracker {
 }
 
 function nopFetch(): typeof fetch {
-  return (() =>
-    Promise.resolve(new Response(null, { status: 201 }))) as typeof fetch;
+  return (() => Promise.resolve(new Response(null, { status: 201 }))) as typeof fetch;
 }
 
 function makeDeps(tracker: StubTracker): ServerDeps & { queue: DeployQueue } {
@@ -277,8 +276,7 @@ test("POST /gate/check still answers 423 when the commit status call throws", as
     ...makeDeps(tracker),
     github: new GitHubClient({
       token: "test",
-      fetchFn: (() =>
-        Promise.reject(new Error("network down"))) as typeof fetch,
+      fetchFn: (() => Promise.reject(new Error("network down"))) as typeof fetch,
     }),
   };
   const errors = t.mock.method(console, "error", () => {});
@@ -298,8 +296,7 @@ test("POST /gate/check rejects a request for a different engineer", async () => 
   const deps = makeDeps(tracker);
   const handler = createHandler(deps);
 
-  const body = (engineer: unknown) =>
-    JSON.stringify({ ...JSON.parse(validBody), engineer });
+  const body = (engineer: unknown) => JSON.stringify({ ...JSON.parse(validBody), engineer });
   assert.deepStrictEqual((await handler(gateCheck(body("alice")))).status, 400);
   assert.deepStrictEqual((await handler(gateCheck(body(7)))).status, 400);
   assert.deepStrictEqual((await handler(gateCheck(body("vlad")))).status, 200);

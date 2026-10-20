@@ -1,17 +1,17 @@
 import { timingSafeEqual } from "node:crypto";
-import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import { Readable } from "node:stream";
+import { createServer } from "node:http";
 import process from "node:process";
-import { SleepStateCache } from "./sleep/state.ts";
-import { OuraTracker } from "./sleep/oura.ts";
+import { Readable } from "node:stream";
+import type { GateConfig, ReverieConfig } from "./config.ts";
+import { DEFAULT_GATE, loadConfig } from "./config.ts";
 import { checkGate } from "./gate/gate.ts";
 import { DeployQueue } from "./gate/queue.ts";
 import { GitHubClient } from "./github/workflow.ts";
-import { WakeWatcher } from "./sleep/watcher.ts";
+import { OuraTracker } from "./sleep/oura.ts";
+import { SleepStateCache } from "./sleep/state.ts";
 import type { SleepTracker } from "./sleep/tracker.ts";
-import { DEFAULT_GATE, loadConfig } from "./config.ts";
-import type { GateConfig, ReverieConfig } from "./config.ts";
+import { WakeWatcher } from "./sleep/watcher.ts";
 
 export interface ServerDeps {
   sleepCache: SleepTracker;
@@ -76,9 +76,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-export function createHandler(
-  deps: ServerDeps,
-): (req: Request) => Promise<Response> {
+export function createHandler(deps: ServerDeps): (req: Request) => Promise<Response> {
   const { sleepCache, queue, github, gateConfig, engineer, apiToken } = deps;
 
   return async (req: Request): Promise<Response> => {
@@ -129,12 +127,7 @@ export function createHandler(
         // The deploy is already queued; a failed status update is cosmetic
         // and must not turn the 423 into a 500.
         try {
-          await github.postCommitStatus(
-            repo,
-            sha,
-            "pending",
-            `Deploy queued: ${result.reason}`,
-          );
+          await github.postCommitStatus(repo, sha, "pending", `Deploy queued: ${result.reason}`);
         } catch (err) {
           console.error("Failed to post pending commit status:", err);
         }
@@ -153,10 +146,7 @@ function toNodeListener(
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     try {
-      const url = new URL(
-        req.url ?? "/",
-        `http://${req.headers.host ?? "localhost"}`,
-      );
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
         if (Array.isArray(value)) {
@@ -178,8 +168,7 @@ function toNodeListener(
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch (err) {
       console.error(err);
-      if (!res.headersSent)
-        res.writeHead(500, { "Content-Type": "text/plain" });
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("Internal Server Error");
     }
   };
@@ -251,8 +240,7 @@ if (import.meta.main) {
 
   const ouraToken = process.env.OURA_TOKEN ?? "";
   const ghToken = process.env.GITHUB_TOKEN ?? "";
-  const engineerName =
-    process.env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer";
+  const engineerName = process.env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer";
   const port = Number(process.env.PORT ?? "8000");
   const dbPath = process.env.REVERIE_DB ?? "reverie.db";
   const apiToken = process.env.REVERIE_API_TOKEN ?? "";

@@ -33,19 +33,12 @@ export class DeployQueue {
     `);
   }
 
-  enqueue(
-    repo: string,
-    branch: string,
-    sha: string,
-    workflowRunId: string,
-  ): void {
+  enqueue(repo: string, branch: string, sha: string, workflowRunId: string): void {
     // Supersede earlier deploys on the same repo+branch, atomically so a
     // failed insert never loses the previously queued deploy.
     this.db.exec("BEGIN");
     try {
-      this.db
-        .prepare("DELETE FROM deploy_queue WHERE repo = ? AND branch = ?")
-        .run(repo, branch);
+      this.db.prepare("DELETE FROM deploy_queue WHERE repo = ? AND branch = ?").run(repo, branch);
       this.db
         .prepare(
           "INSERT INTO deploy_queue (repo, branch, sha, workflow_run_id, queued_at) VALUES (?, ?, ?, ?, ?)",
@@ -80,9 +73,9 @@ export class DeployQueue {
   }
 
   count(): number {
-    const row = this.db
-      .prepare("SELECT COUNT(*) as count FROM deploy_queue")
-      .get() as unknown as { count: number };
+    const row = this.db.prepare("SELECT COUNT(*) as count FROM deploy_queue").get() as unknown as {
+      count: number;
+    };
     return row.count;
   }
 
