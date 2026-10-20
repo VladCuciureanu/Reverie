@@ -1,6 +1,6 @@
 import { DEFAULT_GATE, type GateConfig } from "../config.ts";
 import { checkGate } from "../gate/gate.ts";
-import type { DeployQueue } from "../gate/queue.ts";
+import type { DeployQueue, QueuedDeploy } from "../gate/queue.ts";
 import type { GitHubClient } from "../github/workflow.ts";
 import type { SleepTracker } from "./tracker.ts";
 
@@ -15,6 +15,8 @@ export class WakeWatcher {
   private gate: GateConfig;
   /** Whether the gate was closed at the previous poll. */
   private wasBlocked = false;
+  /** Whether the last drain left deploys queued because dispatching them failed. */
+  private retryPending = false;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private onDrain?: (count: number) => void;
   private timeoutMinutes?: number;
@@ -62,7 +64,10 @@ export class WakeWatcher {
     const woke = this.wasBlocked && !blocked;
     this.wasBlocked = blocked;
 
-    return woke ? await this.drainQueue() : 0;
+    // Deploys whose dispatch failed are retried on each poll while the gate
+    // stays open; timeoutMinutes eventually expires one that keeps failing.
+    const retry = this.retryPending && !blocked;
+    return woke || retry ? await this.drainQueue() : 0;
   }
 
   private async expireStale(): Promise<void> {
@@ -87,12 +92,7 @@ export class WakeWatcher {
     let drained = 0;
 
     for (const deploy of deploys) {
-      // workflow_dispatch needs the workflow ID, not the run ID we queued.
-      const workflowId = await this.github.getWorkflowIdForRun(deploy.repo, deploy.workflow_run_id);
-      if (workflowId === null) continue;
-
-      const ok = await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
-      if (!ok) continue;
+      if (!(await this.dispatch(deploy))) continue;
 
       // Dequeue as soon as the dispatch succeeds, so a failed status post
       // can't get the deploy dispatched again on the next wake.
@@ -110,8 +110,22 @@ export class WakeWatcher {
       }
     }
 
+    this.retryPending = drained < deploys.length;
     this.onDrain?.(drained);
     return drained;
+  }
+
+  /** Re-dispatches a deploy's workflow; false (deploy stays queued) on any failure. */
+  private async dispatch(deploy: QueuedDeploy): Promise<boolean> {
+    try {
+      // workflow_dispatch needs the workflow ID, not the run ID we queued.
+      const workflowId = await this.github.getWorkflowIdForRun(deploy.repo, deploy.workflow_run_id);
+      if (workflowId === null) return false;
+      return await this.github.retriggerWorkflow(deploy.repo, workflowId, deploy.branch);
+    } catch (err) {
+      console.error(`Failed to re-trigger queued deploy for ${deploy.repo}@${deploy.branch}:`, err);
+      return false;
+    }
   }
 
   start(): void {
