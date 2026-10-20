@@ -1,21 +1,32 @@
 /** Commit status context shown on gated commits. */
 const STATUS_CONTEXT = "reverie/gate";
 
+/** Per-request timeout; well under the wake watcher's 2-minute poll interval. */
+const DEFAULT_TIMEOUT_MS = 30 * 1000;
+
 export interface GitHubClientOptions {
   token: string;
   baseUrl?: string;
   fetchFn?: typeof fetch;
+  /** Aborts a request that takes longer than this; defaults to 30 seconds. */
+  timeoutMs?: number;
 }
 
 export class GitHubClient {
   private token: string;
   private baseUrl: string;
   private fetchFn: typeof fetch;
+  private timeoutMs: number;
 
   constructor(options: GitHubClientOptions) {
     this.token = options.token;
     this.baseUrl = options.baseUrl ?? "https://api.github.com";
     this.fetchFn = options.fetchFn ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  private request(url: string, init: RequestInit): Promise<Response> {
+    return this.fetchFn(url, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
   }
 
   /**
@@ -24,7 +35,7 @@ export class GitHubClient {
    */
   async getWorkflowIdForRun(repo: string, runId: string): Promise<string | null> {
     const url = `${this.baseUrl}/repos/${repo}/actions/runs/${runId}`;
-    const response = await this.fetchFn(url, {
+    const response = await this.request(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -41,7 +52,7 @@ export class GitHubClient {
 
   async retriggerWorkflow(repo: string, workflowId: string, ref: string): Promise<boolean> {
     const url = `${this.baseUrl}/repos/${repo}/actions/workflows/${workflowId}/dispatches`;
-    const response = await this.fetchFn(url, {
+    const response = await this.request(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -54,7 +65,7 @@ export class GitHubClient {
     return response.status === 204;
   }
 
-  /** The status is informational, so an error response is ignored; network errors still throw. */
+  /** The status is informational, so an error response is ignored; network errors and timeouts still throw. */
   async postCommitStatus(
     repo: string,
     sha: string,
@@ -62,7 +73,7 @@ export class GitHubClient {
     description: string,
   ): Promise<void> {
     const url = `${this.baseUrl}/repos/${repo}/statuses/${sha}`;
-    await this.fetchFn(url, {
+    await this.request(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
