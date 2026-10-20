@@ -6,6 +6,8 @@ Blocks production deploys while the on-call engineer is in deep or REM sleep, an
 
 Reverie has two parts: an HTTP service that reads the engineer's sleep stage from Oura and keeps a SQLite queue of blocked deploys, and a GitHub composite action that asks the service before each deploy. A blocked deploy fails its workflow run, gets a `pending` commit status, and is re-dispatched once the engineer moves from deep/REM to light sleep or awake.
 
+The watcher only re-dispatches after it has itself seen the engineer in deep or REM sleep during the current process lifetime; if the service starts (or restarts) after the engineer is already awake, queued deploys stay queued until the next deep/REM-to-awake transition or until they expire.
+
 ## Requirements
 
 - Node.js 26 or later (TypeScript runs directly via type stripping; SQLite via `node:sqlite`)
@@ -24,8 +26,8 @@ OURA_TOKEN=... GITHUB_TOKEN=... REVERIE_API_TOKEN="$(openssl rand -hex 32)" npm 
 | `REVERIE_API_TOKEN` | Yes | | Shared secret callers send as `Authorization: Bearer <token>` on `POST /gate/check`. The service exits if it is unset. |
 | `OURA_TOKEN` | Yes | | Oura API personal access token |
 | `GITHUB_TOKEN` | Yes | | Used to post commit statuses and dispatch queued workflows |
-| `REVERIE_ENGINEER` | No | `engineer` in config, else `engineer` | Engineer the service gates on |
-| `REVERIE_CONFIG` | No | `.reverie.yml` | Path to the config file |
+| `REVERIE_ENGINEER` | No | `engineer` from the config file, else `engineer` | Engineer the service gates on |
+| `REVERIE_CONFIG` | No | `.reverie.yml` | Path to the config file, relative to the working directory |
 | `REVERIE_DB` | No | `reverie.db` | SQLite database path |
 | `PORT` | No | `8000` | HTTP port |
 
@@ -86,9 +88,9 @@ jobs:
 | `reverie_url` | Yes | Base URL of the service, e.g. `https://reverie.example.com` |
 | `reverie_token` | Yes | Same value as the service's `REVERIE_API_TOKEN` |
 | `engineer` | Yes | Must match the service's engineer, otherwise the check fails with `400` |
-| `override_by` | No | Name of an awake engineer; skips the gate for this run |
+| `override_by` | No | Name of the engineer overriding the gate. Any non-empty value skips the gate for this run and is shown in the reason. |
 
-The step exits `0` when the deploy is allowed and `1` when it is blocked or the service cannot be reached. It has no outputs.
+The step exits `0` when the deploy is allowed and `1` when it is blocked, the service returns an error, or the service cannot be reached. It has no outputs.
 
 Repository settings (Settings → Secrets and variables → Actions):
 
@@ -114,7 +116,7 @@ This repository's [`deploy.yml`](.github/workflows/deploy.yml) is a working exam
 }
 ```
 
-`sleep_state` is `unknown` and `since` is `null` when Oura has no current stage.
+`sleep_state` is `unknown` and `since` is `null` when the stage can't be determined: the Oura request failed or there is no phase data for the current time.
 
 `POST /gate/check` requires `Authorization: Bearer $REVERIE_API_TOKEN` (`401` otherwise):
 
@@ -140,7 +142,7 @@ This repository's [`deploy.yml`](.github/workflows/deploy.yml) is a working exam
 }
 ```
 
-The queue keeps one deploy per repository and branch; a newer blocked deploy replaces the older one. Oura is polled every 2 minutes and its answer cached for 10 minutes.
+The queue keeps one deploy per repository and branch; a newer blocked deploy replaces the older one. The watcher polls every 2 minutes through a 10-minute cache, so Oura is queried at most once per 10 minutes while it returns a stage, and a wake-up can take up to 10 minutes to be noticed.
 
 ## Other sleep trackers
 
