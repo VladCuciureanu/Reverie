@@ -200,6 +200,7 @@ export function startService(
       queue: deps.queue,
       github: deps.github,
       engineer: deps.engineer,
+      gate: deps.gateConfig,
       timeoutMinutes: deps.gateConfig.timeout_minutes,
       onDrain: (count) => {
         if (count > 0) console.log(`Re-triggered ${count} queued deploy(s)`);

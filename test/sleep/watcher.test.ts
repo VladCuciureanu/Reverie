@@ -206,3 +206,77 @@ test("fails and drops deploys queued longer than timeoutMinutes", async () => {
 
   queue.close();
 });
+
+test("uses the gate's block_on and allow_on to decide when the engineer woke", async () => {
+  const { tracker, queue, github } = setup();
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    gate: {
+      block_on: ["deep"],
+      allow_on: ["awake", "light", "rem"],
+      fallback: "block",
+      timeout_minutes: 480,
+    },
+  });
+
+  tracker.status = { state: "deep", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  // REM is allowed by this gate, so leaving deep for REM opens it.
+  tracker.status = { state: "rem", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+  assert.deepStrictEqual(queue.count(), 0);
+
+  queue.close();
+});
+
+test("does not drain while the gate still blocks the new stage", async () => {
+  const { tracker, queue, github } = setup();
+  const watcher = new WakeWatcher({
+    tracker,
+    queue,
+    github,
+    engineer: "vlad",
+    gate: {
+      block_on: ["deep", "rem", "light"],
+      allow_on: ["awake"],
+      fallback: "block",
+      timeout_minutes: 480,
+    },
+  });
+
+  tracker.status = { state: "rem", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  tracker.status = { state: "light", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 0);
+  assert.deepStrictEqual(queue.count(), 1);
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+
+  queue.close();
+});
+
+test("drains when the stage becomes known again after an unknown poll blocked", async () => {
+  const { tracker, queue, github } = setup();
+  const watcher = new WakeWatcher({ tracker, queue, github, engineer: "vlad" });
+
+  tracker.status = { state: "rem", since: new Date() };
+  await watcher.poll();
+  queue.enqueue("org/repo", "main", "abc123", "run-1");
+
+  // Unknown blocks under fallback: block, so the gate is still closed.
+  tracker.status = null;
+  assert.deepStrictEqual(await watcher.poll(), 0);
+
+  tracker.status = { state: "awake", since: new Date() };
+  assert.deepStrictEqual(await watcher.poll(), 1);
+
+  queue.close();
+});
