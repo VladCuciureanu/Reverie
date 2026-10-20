@@ -71,6 +71,20 @@ gate:
   assert.deepStrictEqual(config.gate.fallback, "allow");
 });
 
+test("throws on an invalid fallback", () => {
+  for (const fallback of ["alow", "true", "null"]) {
+    const yaml = `sleep_tracker: oura\nengineer: vlad\ngate:\n  fallback: ${fallback}\n`;
+    assert.throws(() => parseConfig(yaml), { message: /^Invalid fallback: / }, fallback);
+  }
+});
+
+test("throws on an out-of-range or non-integer timeout_minutes", () => {
+  for (const timeout of ["0", "-5", "1.5", '"60"', "abc"]) {
+    const yaml = `sleep_tracker: oura\nengineer: vlad\ngate:\n  timeout_minutes: ${timeout}\n`;
+    assert.throws(() => parseConfig(yaml), { message: /^Invalid timeout_minutes: / }, timeout);
+  }
+});
+
 test("loadConfig reads and parses a config file", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "reverie-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

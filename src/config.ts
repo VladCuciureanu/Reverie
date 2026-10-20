@@ -36,6 +36,20 @@ function validateSleepStates(states: unknown): SleepState[] {
   return states as SleepState[];
 }
 
+function validateFallback(fallback: unknown): GateConfig["fallback"] {
+  if (fallback !== "allow" && fallback !== "block") {
+    throw new Error(`Invalid fallback: ${fallback} (expected allow or block)`);
+  }
+  return fallback;
+}
+
+function validateTimeout(minutes: unknown): number {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes <= 0) {
+    throw new Error(`Invalid timeout_minutes: ${minutes} (expected a positive integer)`);
+  }
+  return minutes;
+}
+
 export function parseConfig(yaml: string): ReverieConfig {
   const raw = parseYaml(yaml) as Record<string, unknown>;
 
@@ -54,11 +68,12 @@ export function parseConfig(yaml: string): ReverieConfig {
   const gate: GateConfig = {
     block_on: rawGate.block_on ? validateSleepStates(rawGate.block_on) : DEFAULT_GATE.block_on,
     allow_on: rawGate.allow_on ? validateSleepStates(rawGate.allow_on) : DEFAULT_GATE.allow_on,
-    fallback: rawGate.fallback === "allow" ? "allow" : DEFAULT_GATE.fallback,
+    fallback:
+      rawGate.fallback === undefined ? DEFAULT_GATE.fallback : validateFallback(rawGate.fallback),
     timeout_minutes:
-      typeof rawGate.timeout_minutes === "number"
-        ? rawGate.timeout_minutes
-        : DEFAULT_GATE.timeout_minutes,
+      rawGate.timeout_minutes === undefined
+        ? DEFAULT_GATE.timeout_minutes
+        : validateTimeout(rawGate.timeout_minutes),
   };
 
   return {

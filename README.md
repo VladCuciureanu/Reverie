@@ -49,8 +49,8 @@ gate:
 |---|---|---|
 | `gate.block_on` | `[deep, rem]` | Stages that block deploys. Valid stages: `awake`, `light`, `deep`, `rem`. |
 | `gate.allow_on` | `[awake, light]` | Stages that allow deploys. `block_on` wins if a stage is in both. |
-| `gate.fallback` | `block` | `allow` or `block`; used when the stage is unknown or in neither list. Any value other than `allow` means `block`. |
-| `gate.timeout_minutes` | `480` | Queued deploys older than this are dropped and their commit status set to `failure`. |
+| `gate.fallback` | `block` | `allow` or `block`; used when the stage is unknown or in neither list. Any other value is a config error. |
+| `gate.timeout_minutes` | `480` | Positive whole number of minutes. Queued deploys older than this are dropped and their commit status set to `failure`. |
 
 ## Gating a workflow
 
