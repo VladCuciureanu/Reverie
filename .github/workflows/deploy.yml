@@ -17,9 +17,9 @@ jobs:
       # Secrets can't be read in `if:` conditions, so expose it via env.
       REVERIE_URL: ${{ secrets.REVERIE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
