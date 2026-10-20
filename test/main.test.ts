@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { DeployQueue } from "../src/gate/queue.ts";
 import { GitHubClient } from "../src/github/workflow.ts";
 import { createHandler, type ServerDeps, startService } from "../src/main.ts";
@@ -21,7 +26,7 @@ function nopFetch(): typeof fetch {
 function makeDeps(tracker: StubTracker): ServerDeps & { queue: DeployQueue } {
   const queue = new DeployQueue(":memory:");
   return {
-    sleepCache: tracker,
+    tracker,
     queue,
     github: new GitHubClient({ token: "test", fetchFn: nopFetch() }),
     gateConfig: {
@@ -51,7 +56,7 @@ test("GET /status returns sleep state and gate decision", async () => {
   const deps = makeDeps(tracker);
   const handler = createHandler(deps);
 
-  const res = await handler(new Request("http://localhost/status"));
+  const res = await handler(new Request("http://localhost/status", { headers: AUTH }));
   assert.deepStrictEqual(res.status, 200);
   const body = await res.json();
   assert.deepStrictEqual(body.engineer, "vlad");
@@ -315,5 +320,65 @@ test("POST /webhook/sleep is not served", async () => {
     }),
   );
   assert.deepStrictEqual(res.status, 404);
+  deps.queue.close();
+});
+
+test("the service exits 1 with a one-line error when a required variable is missing", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const main = fileURLToPath(new URL("../src/main.ts", import.meta.url));
+  const result = spawnSync(process.execPath, [main], {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 10_000,
+    env: {
+      REVERIE_API_TOKEN: "api",
+      GITHUB_TOKEN: "gh",
+      REVERIE_ENGINEER: "vlad",
+      PORT: "0",
+    },
+  });
+  assert.deepStrictEqual(result.status, 1);
+  assert.deepStrictEqual(result.stderr, "reverie: OURA_TOKEN must be set\n");
+});
+
+test("GET /status rejects missing or wrong token with 401", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = makeDeps(tracker);
+  const handler = createHandler(deps);
+
+  for (const headers of [{}, { Authorization: "Bearer wrong" }] as Record<string, string>[]) {
+    const res = await handler(new Request("http://localhost/status", { headers }));
+    assert.deepStrictEqual(res.status, 401);
+    assert.deepStrictEqual(await res.json(), { error: "Unauthorized" });
+  }
+  deps.queue.close();
+});
+
+test("startService serves the handler over HTTP", async () => {
+  const tracker = new StubTracker();
+  tracker.status = { state: "rem", since: new Date("2026-03-24T03:00:00Z") };
+  const deps = makeDeps(tracker);
+  const watcher = { start: () => {}, stop: () => {} };
+  const service = startService(deps, { port: 0, watcher });
+  await new Promise((resolve) => service.server.once("listening", resolve));
+  const { port } = service.server.address() as { port: number };
+  const base = `http://localhost:${port}`;
+
+  const status = await fetch(`${base}/status`, { headers: AUTH });
+  assert.deepStrictEqual(status.status, 200);
+  assert.deepStrictEqual((await status.json()).sleep_state, "rem");
+
+  const check = await fetch(`${base}/gate/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...AUTH },
+    body: validBody,
+  });
+  assert.deepStrictEqual(check.status, 423);
+  assert.deepStrictEqual(check.headers.get("content-type"), "application/json");
+  assert.deepStrictEqual(deps.queue.count(), 1);
+
+  await service.close();
   deps.queue.close();
 });

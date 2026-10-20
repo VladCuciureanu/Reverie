@@ -1,3 +1,6 @@
+/** Commit status context shown on gated commits. */
+const STATUS_CONTEXT = "reverie/gate";
+
 export interface GitHubClientOptions {
   token: string;
   baseUrl?: string;
@@ -51,24 +54,22 @@ export class GitHubClient {
     return response.status === 204;
   }
 
+  /** The status is informational, so an error response is ignored; network errors still throw. */
   async postCommitStatus(
     repo: string,
     sha: string,
     state: "pending" | "success" | "failure" | "error",
     description: string,
-    context = "reverie/gate",
-  ): Promise<boolean> {
+  ): Promise<void> {
     const url = `${this.baseUrl}/repos/${repo}/statuses/${sha}`;
-    const response = await this.fetchFn(url, {
+    await this.fetchFn(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
         Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ state, description, context }),
+      body: JSON.stringify({ state, description, context: STATUS_CONTEXT }),
     });
-
-    return response.status === 201;
   }
 }

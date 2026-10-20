@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { type ActionInputs, runAction } from "../../src/github/action.ts";
+import {
+  type ActionInputs,
+  formatResult,
+  runAction,
+  writeOutputs,
+} from "../../src/github/action.ts";
 
 const baseInputs: ActionInputs = {
   reverieUrl: "http://localhost:8000",
@@ -133,4 +141,88 @@ test("action fails cleanly when the service is unreachable", async () => {
   const result = await runAction(baseInputs, fetchFn);
   assert.deepStrictEqual(result.exitCode, 1);
   assert.match(result.reason, /fetch failed/);
+});
+
+const blockedBody = {
+  allowed: false,
+  reason: "Engineer is in REM sleep.",
+  sleep_state: "rem",
+  retry_after_seconds: 1800,
+};
+
+test("a 423 is reported as blocked and queued for a re-run", async () => {
+  const result = await runAction(baseInputs, mockFetch(blockedBody, 423));
+  assert.deepStrictEqual(result.outcome, "blocked");
+  assert.deepStrictEqual(
+    formatResult(result),
+    "reverie: deploy blocked (sleep state: rem): Engineer is in REM sleep. It is queued and will be re-run when the engineer wakes.",
+  );
+});
+
+test("errors are not reported as queued for a re-run", async () => {
+  const unreachable = (() => Promise.reject(new TypeError("fetch failed"))) as typeof fetch;
+  const cases: [string, typeof fetch][] = [
+    ["401", mockFetch({ error: "Unauthorized" }, 401)],
+    ["400", mockFetch({ error: 'Field "sha" must be a non-empty string' }, 400)],
+    ["500 claiming blocked", mockFetch(blockedBody, 500)],
+    ["unreachable", unreachable],
+  ];
+  for (const [name, fetchFn] of cases) {
+    const result = await runAction(baseInputs, fetchFn);
+    assert.deepStrictEqual(result.outcome, "error", name);
+    assert.deepStrictEqual(result.exitCode, 1, name);
+    const line = formatResult(result);
+    assert.match(line, /^reverie: gate check failed: /, name);
+    assert.doesNotMatch(line, /re-run|retry/, name);
+  }
+});
+
+test("output is plain ASCII on one line", async () => {
+  const allowed = await runAction(
+    baseInputs,
+    mockFetch({
+      allowed: true,
+      reason: "Engineer is awake. Deploy allowed.",
+      sleep_state: "awake",
+    }),
+  );
+  const blocked = await runAction(baseInputs, mockFetch(blockedBody, 423));
+  const error = await runAction(baseInputs, mockFetch({ error: "Unauthorized" }, 401));
+  for (const result of [allowed, blocked, error]) {
+    assert.match(formatResult(result), /^[\x20-\x7e]+$/);
+  }
+});
+
+function outputFile(t: { after: (fn: () => void) => void }): string {
+  const dir = mkdtempSync(join(tmpdir(), "reverie-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "github_output");
+  writeFileSync(path, "earlier=1\n");
+  return path;
+}
+
+test("writeOutputs appends allowed and sleep_state", async (t) => {
+  const path = outputFile(t);
+  writeOutputs(path, await runAction(baseInputs, mockFetch(blockedBody, 423)));
+  assert.deepStrictEqual(readFileSync(path, "utf8"), "earlier=1\nallowed=false\nsleep_state=rem\n");
+
+  const allowed = await runAction(
+    baseInputs,
+    mockFetch({ allowed: true, reason: "ok", sleep_state: "awake" }),
+  );
+  writeOutputs(path, allowed);
+  assert.match(readFileSync(path, "utf8"), /allowed=true\nsleep_state=awake\n$/);
+});
+
+test("writeOutputs reports unknown for an unexpected sleep_state", async (t) => {
+  const path = outputFile(t);
+  const result = await runAction(
+    baseInputs,
+    mockFetch({ ...blockedBody, sleep_state: "rem\nallowed=true" }, 423),
+  );
+  writeOutputs(path, result);
+  assert.deepStrictEqual(
+    readFileSync(path, "utf8"),
+    "earlier=1\nallowed=false\nsleep_state=unknown\n",
+  );
 });

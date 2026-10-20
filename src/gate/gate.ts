@@ -8,6 +8,14 @@ export interface GateResult {
   retry_after_seconds: number | null;
 }
 
+// retry_after_seconds is only a hint for callers: blocked deploys are queued
+// and the wake watcher re-dispatches them itself, so nothing needs to retry.
+
+/** Unknown stage: failed Oura reads aren't cached, so a check soon after may succeed. */
+const RETRY_UNKNOWN_SECONDS = 5 * 60;
+/** Blocked by sleep: a deep or REM stretch usually lasts tens of minutes. */
+const RETRY_ASLEEP_SECONDS = 30 * 60;
+
 export function checkGate(
   status: SleepStatus | null,
   config: GateConfig,
@@ -30,7 +38,7 @@ export function checkGate(
         ? "Sleep state unknown. Fallback: allow."
         : "Sleep state unknown. Fallback: block.",
       sleep_state: "unknown",
-      retry_after_seconds: allowed ? null : 300,
+      retry_after_seconds: allowed ? null : RETRY_UNKNOWN_SECONDS,
     };
   }
 
@@ -39,7 +47,7 @@ export function checkGate(
       allowed: false,
       reason: `Engineer is in ${status.state.toUpperCase()} sleep.`,
       sleep_state: status.state,
-      retry_after_seconds: 1800,
+      retry_after_seconds: RETRY_ASLEEP_SECONDS,
     };
   }
 
@@ -49,7 +57,7 @@ export function checkGate(
       allowed,
       reason: `Engineer is ${status.state}, which is not in allow_on. Fallback: ${config.fallback}.`,
       sleep_state: status.state,
-      retry_after_seconds: allowed ? null : 1800,
+      retry_after_seconds: allowed ? null : RETRY_ASLEEP_SECONDS,
     };
   }
 

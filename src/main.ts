@@ -3,8 +3,8 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import process from "node:process";
 import { Readable } from "node:stream";
-import type { GateConfig, ReverieConfig } from "./config.ts";
-import { DEFAULT_GATE, loadConfig } from "./config.ts";
+import type { GateConfig, Settings } from "./config.ts";
+import { loadSettings } from "./config.ts";
 import { checkGate } from "./gate/gate.ts";
 import { DeployQueue } from "./gate/queue.ts";
 import { GitHubClient } from "./github/workflow.ts";
@@ -14,7 +14,8 @@ import type { SleepTracker } from "./sleep/tracker.ts";
 import { WakeWatcher } from "./sleep/watcher.ts";
 
 export interface ServerDeps {
-  sleepCache: SleepTracker;
+  /** Source of the sleep stage; the service wraps Oura in a SleepStateCache. */
+  tracker: SleepTracker;
   queue: DeployQueue;
   github: GitHubClient;
   gateConfig: GateConfig;
@@ -77,13 +78,20 @@ function json(data: unknown, status = 200): Response {
 }
 
 export function createHandler(deps: ServerDeps): (req: Request) => Promise<Response> {
-  const { sleepCache, queue, github, gateConfig, engineer, apiToken } = deps;
+  const { tracker, queue, github, gateConfig, engineer, apiToken } = deps;
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    const route = `${req.method} ${url.pathname}`;
+    if (route !== "GET /status" && route !== "POST /gate/check") {
+      return json({ error: "Not found" }, 404);
+    }
+    if (!isAuthorized(req, apiToken)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
 
-    if (req.method === "GET" && url.pathname === "/status") {
-      const status = await sleepCache.getStatus(engineer);
+    if (route === "GET /status") {
+      const status = await tracker.getStatus(engineer);
       const gateResult = checkGate(status, gateConfig);
       return json({
         engineer,
@@ -94,76 +102,61 @@ export function createHandler(deps: ServerDeps): (req: Request) => Promise<Respo
       });
     }
 
-    if (req.method === "POST" && url.pathname === "/gate/check") {
-      if (!isAuthorized(req, apiToken)) {
-        return json({ error: "Unauthorized" }, 401);
-      }
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "Request body must be valid JSON" }, 400);
+    }
+    const parsed = parseGateCheck(body);
+    if (typeof parsed === "string") {
+      return json({ error: parsed }, 400);
+    }
+    if (parsed.engineer && parsed.engineer !== engineer) {
+      return json(
+        {
+          error: `This Reverie service gates on "${engineer}", not "${parsed.engineer}"`,
+        },
+        400,
+      );
+    }
+    const { repo, branch, sha, workflow_run_id, override_by } = parsed;
 
-      let body: unknown;
+    const status = await tracker.getStatus(engineer);
+    const result = checkGate(status, gateConfig, override_by);
+
+    if (!result.allowed) {
+      queue.enqueue(repo, branch, sha, workflow_run_id);
+      // The deploy is already queued; a failed status update is cosmetic
+      // and must not turn the 423 into a 500.
       try {
-        body = await req.json();
-      } catch {
-        return json({ error: "Request body must be valid JSON" }, 400);
+        await github.postCommitStatus(repo, sha, "pending", `Deploy queued: ${result.reason}`);
+      } catch (err) {
+        console.error("Failed to post pending commit status:", err);
       }
-      const parsed = parseGateCheck(body);
-      if (typeof parsed === "string") {
-        return json({ error: parsed }, 400);
-      }
-      if (parsed.engineer && parsed.engineer !== engineer) {
-        return json(
-          {
-            error: `This Reverie service gates on "${engineer}", not "${parsed.engineer}"`,
-          },
-          400,
-        );
-      }
-      const { repo, branch, sha, workflow_run_id, override_by } = parsed;
-
-      const status = await sleepCache.getStatus(engineer);
-      const result = checkGate(status, gateConfig, override_by);
-
-      if (!result.allowed) {
-        queue.enqueue(repo, branch, sha, workflow_run_id);
-        // The deploy is already queued; a failed status update is cosmetic
-        // and must not turn the 423 into a 500.
-        try {
-          await github.postCommitStatus(repo, sha, "pending", `Deploy queued: ${result.reason}`);
-        } catch (err) {
-          console.error("Failed to post pending commit status:", err);
-        }
-      }
-
-      return json(result, result.allowed ? 200 : 423);
     }
 
-    return json({ error: "Not found" }, 404);
+    return json(result, result.allowed ? 200 : 423);
   };
 }
 
-/** Adapts a Fetch-style handler to node:http (replacement for Deno.serve). */
+/** Adapts a Fetch-style handler to node:http. */
 function toNodeListener(
   handler: (req: Request) => Promise<Response>,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     try {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (Array.isArray(value)) {
-          for (const v of value) headers.append(key, v);
-        } else if (value !== undefined) {
-          headers.set(key, value);
-        }
-      }
       const hasBody = req.method !== "GET" && req.method !== "HEAD";
-      const request = new Request(url, {
-        method: req.method,
-        headers,
-        body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
-        duplex: hasBody ? "half" : undefined,
-      } as RequestInit);
-
-      const response = await handler(request);
+      const response = await handler(
+        new Request(new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`), {
+          method: req.method,
+          headers: Object.entries(req.headersDistinct).flatMap(([name, values]) =>
+            (values ?? []).map((value): [string, string] => [name, value]),
+          ),
+          body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
+          duplex: "half",
+        } as RequestInit),
+      );
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch (err) {
@@ -174,7 +167,8 @@ function toNodeListener(
   };
 }
 
-export interface Watcher {
+/** What startService needs from the wake watcher; tests substitute a fake. */
+interface Watcher {
   start(): void;
   stop(): void;
 }
@@ -197,10 +191,11 @@ export function startService(
   const watcher =
     options.watcher ??
     new WakeWatcher({
-      tracker: deps.sleepCache,
+      tracker: deps.tracker,
       queue: deps.queue,
       github: deps.github,
       engineer: deps.engineer,
+      gate: deps.gateConfig,
       timeoutMinutes: deps.gateConfig.timeout_minutes,
       onDrain: (count) => {
         if (count > 0) console.log(`Re-triggered ${count} queued deploy(s)`);
@@ -222,52 +217,35 @@ export function startService(
   };
 }
 
-if (import.meta.main) {
-  const configPath = process.env.REVERIE_CONFIG ?? ".reverie.yml";
-  let config: ReverieConfig | null;
+function main(): void {
+  let settings: Settings;
   try {
-    config = loadConfig(configPath);
+    settings = loadSettings(process.env);
   } catch (err) {
-    console.error(`Invalid config ${configPath}: ${(err as Error).message}`);
-    process.exit(1);
+    console.error(`reverie: ${(err as Error).message}`);
+    process.exitCode = 1;
+    return;
   }
-  if (!config) {
-    console.log(`No config at ${configPath}; using default gate settings`);
-  } else if (config.sleep_tracker !== "oura") {
-    console.error(`Unsupported sleep_tracker: ${config.sleep_tracker}`);
-    process.exit(1);
+  if (!settings.configFound) {
+    console.log(`No config at ${settings.configPath}; using default gate settings`);
   }
 
-  const ouraToken = process.env.OURA_TOKEN ?? "";
-  const ghToken = process.env.GITHUB_TOKEN ?? "";
-  const engineerName = process.env.REVERIE_ENGINEER ?? config?.engineer ?? "engineer";
-  const port = Number(process.env.PORT ?? "8000");
-  const dbPath = process.env.REVERIE_DB ?? "reverie.db";
-  const apiToken = process.env.REVERIE_API_TOKEN ?? "";
-  if (!apiToken) {
-    console.error("REVERIE_API_TOKEN must be set");
-    process.exit(1);
-  }
-
-  const tracker = new OuraTracker({ token: ouraToken });
-  const sleepCache = new SleepStateCache(tracker);
-  const queue = new DeployQueue(dbPath);
-  const github = new GitHubClient({ token: ghToken });
-
-  const gateConfig: GateConfig = config?.gate ?? DEFAULT_GATE;
+  const tracker = new SleepStateCache(new OuraTracker({ token: settings.ouraToken }));
+  const queue = new DeployQueue(settings.dbPath);
+  const github = new GitHubClient({ token: settings.githubToken });
 
   const service = startService(
     {
-      sleepCache,
+      tracker,
       queue,
       github,
-      gateConfig,
-      engineer: engineerName,
-      apiToken,
+      gateConfig: settings.gate,
+      engineer: settings.engineer,
+      apiToken: settings.apiToken,
     },
     {
-      port,
-      onListening: () => console.log(`Listening on http://localhost:${port}/`),
+      port: settings.port,
+      onListening: () => console.log(`Listening on http://localhost:${settings.port}/`),
     },
   );
 
@@ -279,3 +257,5 @@ if (import.meta.main) {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 }
+
+if (import.meta.main) main();

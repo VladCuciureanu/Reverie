@@ -1,7 +1,8 @@
+import { DEFAULT_GATE, type GateConfig } from "../config.ts";
+import { checkGate } from "../gate/gate.ts";
 import type { DeployQueue } from "../gate/queue.ts";
 import type { GitHubClient } from "../github/workflow.ts";
 import type { SleepTracker } from "./tracker.ts";
-import type { SleepState } from "./types.ts";
 
 const DEFAULT_POLL_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -11,7 +12,9 @@ export class WakeWatcher {
   private github: GitHubClient;
   private engineer: string;
   private pollMs: number;
-  private lastState: SleepState | null = null;
+  private gate: GateConfig;
+  /** Whether the gate was closed at the previous poll. */
+  private wasBlocked = false;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private onDrain?: (count: number) => void;
   private timeoutMinutes?: number;
@@ -22,6 +25,8 @@ export class WakeWatcher {
     queue: DeployQueue;
     github: GitHubClient;
     engineer: string;
+    /** Decides when the engineer counts as asleep; defaults to DEFAULT_GATE. */
+    gate?: GateConfig;
     pollMs?: number;
     onDrain?: (count: number) => void;
     /** Queued deploys older than this are dropped and marked failed. */
@@ -33,6 +38,7 @@ export class WakeWatcher {
     this.github = options.github;
     this.engineer = options.engineer;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
+    this.gate = options.gate ?? DEFAULT_GATE;
     this.onDrain = options.onDrain;
     this.timeoutMinutes = options.timeoutMinutes;
     this.now = options.now ?? (() => new Date());
@@ -41,18 +47,14 @@ export class WakeWatcher {
   async poll(): Promise<number> {
     await this.expireStale();
 
+    // "Waking up" means the gate goes from closed to open, by the same
+    // rules /gate/check uses to block deploys.
     const status = await this.tracker.getStatus(this.engineer);
-    const currentState = status?.state ?? null;
-    const wasAsleep =
-      this.lastState !== null && this.lastState !== "awake" && this.lastState !== "light";
-    const isAwake = currentState === "awake" || currentState === "light";
-    this.lastState = currentState;
+    const blocked = !checkGate(status, this.gate).allowed;
+    const woke = this.wasBlocked && !blocked;
+    this.wasBlocked = blocked;
 
-    if (wasAsleep && isAwake) {
-      return await this.drainQueue();
-    }
-
-    return 0;
+    return woke ? await this.drainQueue() : 0;
   }
 
   private async expireStale(): Promise<void> {
