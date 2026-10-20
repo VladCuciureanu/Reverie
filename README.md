@@ -67,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24 # the action runs TypeScript directly on Node 24+
+          node-version: 26 # the action runs TypeScript directly on Node 26+
 
       - name: Check sleep gate
         uses: reverie/gate@v1
@@ -147,7 +147,7 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 
 ## Architecture
 
-- **Runtime**: Node.js 24+ (TypeScript via built-in type stripping)
+- **Runtime**: Node.js 26+ (TypeScript via built-in type stripping)
 - **Persistence**: SQLite (deploy queue)
 - **Auth**: GitHub App token
 - **Sleep tracker**: Generic adapter interface (Oura Ring reference implementation)
