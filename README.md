@@ -2,7 +2,7 @@
 
 Blocks production deploys while the on-call engineer is in deep or REM sleep, and re-runs them when they wake up.
 
-> Deployment rejected: Engineer is in REM sleep.
+> reverie: deploy blocked (sleep state: rem): Engineer is in REM sleep. It is queued and will be re-run when the engineer wakes.
 
 Reverie has two parts: an HTTP service that reads the engineer's sleep stage from Oura and keeps a SQLite queue of blocked deploys, and a GitHub composite action that asks the service before each deploy. A blocked deploy fails its workflow run, gets a `pending` commit status, and is re-dispatched once the engineer moves from deep/REM to light sleep or awake.
 
@@ -94,7 +94,15 @@ jobs:
 | `engineer` | Yes | Must match the service's engineer, otherwise the check fails with `400` |
 | `override_by` | No | Name of the engineer overriding the gate. Any non-empty value skips the gate for this run and is shown in the reason. |
 
-The step exits `0` when the deploy is allowed and `1` when it is blocked, the service returns an error, or the service cannot be reached. It has no outputs.
+The step exits `0` when the deploy is allowed and `1` otherwise, and prints one line saying which case applies:
+
+| Case | Exit | Output |
+|---|---|---|
+| Allowed (`200`) | `0` | `Deploy allowed: <reason>` on stdout |
+| Blocked (`423`) | `1` | `reverie: deploy blocked (sleep state: <state>): <reason> It is queued and will be re-run when the engineer wakes.` on stderr |
+| Error: any other status, a non-JSON body, or the service is unreachable | `1` | `reverie: gate check failed: <reason>` on stderr. Nothing is queued, so nothing will be re-run; fix the cause and re-run the workflow. |
+
+It has no outputs.
 
 Repository settings (Settings → Secrets and variables → Actions):
 

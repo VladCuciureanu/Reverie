@@ -12,7 +12,14 @@ export interface ActionInputs {
   overrideBy?: string;
 }
 
+/**
+ * `blocked`: the service queued the deploy and will re-run it on wake.
+ * `error`: the check itself failed (bad request, auth, network); nothing is queued.
+ */
+export type Outcome = "allowed" | "blocked" | "error";
+
 export interface ActionResult {
+  outcome: Outcome;
   allowed: boolean;
   reason: string;
   sleep_state: string;
@@ -20,7 +27,7 @@ export interface ActionResult {
 }
 
 function failure(reason: string, sleepState = "unknown"): ActionResult {
-  return { allowed: false, reason, sleep_state: sleepState, exitCode: 1 };
+  return { outcome: "error", allowed: false, reason, sleep_state: sleepState, exitCode: 1 };
 }
 
 export async function runAction(
@@ -71,9 +78,24 @@ export async function runAction(
 
   // 200 means allowed, 423 means blocked; any other status is an error.
   if (response.ok && result.allowed === true) {
-    return { allowed: true, reason, sleep_state: sleepState, exitCode: 0 };
+    return { outcome: "allowed", allowed: true, reason, sleep_state: sleepState, exitCode: 0 };
+  }
+  if (response.status === 423 && result.allowed === false) {
+    return { outcome: "blocked", allowed: false, reason, sleep_state: sleepState, exitCode: 1 };
   }
   return failure(reason, sleepState);
+}
+
+/** The one line the action prints: stdout when allowed, stderr otherwise. */
+export function formatResult(result: ActionResult): string {
+  switch (result.outcome) {
+    case "allowed":
+      return `Deploy allowed: ${result.reason}`;
+    case "blocked":
+      return `reverie: deploy blocked (sleep state: ${result.sleep_state}): ${result.reason} It is queued and will be re-run when the engineer wakes.`;
+    case "error":
+      return `reverie: gate check failed: ${result.reason}`;
+  }
 }
 
 if (import.meta.main) {
@@ -89,14 +111,7 @@ if (import.meta.main) {
   };
 
   const result = await runAction(inputs);
-
-  if (result.allowed) {
-    console.log(`✅ ${result.reason}`);
-  } else {
-    console.error(`❌ Deployment rejected: ${result.reason}`);
-    console.error(`   Current state: ${result.sleep_state}`);
-    console.error(`   Deploy will auto-retry when engineer is awake.`);
-  }
-
-  process.exit(result.exitCode);
+  if (result.allowed) console.log(formatResult(result));
+  else console.error(formatResult(result));
+  process.exitCode = result.exitCode;
 }
