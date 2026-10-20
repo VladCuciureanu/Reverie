@@ -13,7 +13,6 @@ import { GitHubClient } from "./github/workflow.ts";
 import { WakeWatcher } from "./sleep/watcher.ts";
 import type { SleepTracker } from "./sleep/tracker.ts";
 import type { GateConfig } from "./config.ts";
-import type { SleepStatus } from "./sleep/types.ts";
 
 export interface ServerDeps {
   sleepCache: SleepTracker;
@@ -143,13 +142,6 @@ export function createHandler(
       }
 
       return json(result, result.allowed ? 200 : 423);
-    }
-
-    if (req.method === "POST" && url.pathname === "/webhook/sleep") {
-      const body = (await req.json()) as SleepStatus;
-      // Webhook pushes are handled by the cache layer refreshing on next poll.
-      // This endpoint exists for future direct push support.
-      return json({ received: true, state: body.state });
     }
 
     return json({ error: "Not found" }, 404);

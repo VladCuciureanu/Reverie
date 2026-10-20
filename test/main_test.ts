@@ -306,3 +306,17 @@ test("POST /gate/check rejects a request for a different engineer", async () => 
   assert.deepStrictEqual((await handler(gateCheck(body("")))).status, 200);
   deps.queue.close();
 });
+
+test("POST /webhook/sleep is not served", async () => {
+  const deps = makeDeps(new StubTracker());
+  const handler = createHandler(deps);
+
+  const res = await handler(
+    new Request("http://localhost/webhook/sleep", {
+      method: "POST",
+      body: JSON.stringify({ state: "awake" }),
+    }),
+  );
+  assert.deepStrictEqual(res.status, 404);
+  deps.queue.close();
+});

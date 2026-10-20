@@ -136,7 +136,7 @@ Any awake engineer can override the gate for a single deploy by triggering the w
 - **Sleep tracker**: Generic adapter interface (Oura Ring reference implementation)
 
 ```
-┌──────────────┐    poll/webhook    ┌──────────────────┐
+┌──────────────┐        poll        ┌──────────────────┐
 │  Sleep       │ ──────────────────▶│  Reverie Service │
 │  Tracker     │                    │  (Node/TS)       │
 └──────────────┘                    │                  │
