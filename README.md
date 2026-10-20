@@ -159,7 +159,7 @@ interface SleepTracker {
 
 ```bash
 npm run dev        # start with --watch
-npm test           # node --test, test/**/*_test.ts
+npm test           # node --test, test/**/*.test.ts
 npm run typecheck  # tsc, no emit
 npm run lint       # biome lint
 npm run format     # biome format --write
