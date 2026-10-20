@@ -73,3 +73,34 @@ test("override bypasses gate even during REM", () => {
   assert.deepStrictEqual(result.allowed, true);
   assert.deepStrictEqual(result.reason, "Gate overridden by alice.");
 });
+
+test("applies fallback to states in neither block_on nor allow_on", () => {
+  const status: SleepStatus = {
+    state: "light",
+    since: new Date("2026-03-24T01:00:00Z"),
+  };
+  const gate: GateConfig = {
+    ...defaultGate,
+    block_on: ["deep"],
+    allow_on: ["awake"],
+  };
+  const blocked = checkGate(status, gate);
+  assert.deepStrictEqual(blocked.allowed, false);
+  assert.deepStrictEqual(blocked.sleep_state, "light");
+
+  const allowed = checkGate(status, { ...gate, fallback: "allow" });
+  assert.deepStrictEqual(allowed.allowed, true);
+});
+
+test("block_on wins over allow_on", () => {
+  const status: SleepStatus = {
+    state: "light",
+    since: new Date("2026-03-24T01:00:00Z"),
+  };
+  const gate: GateConfig = {
+    ...defaultGate,
+    block_on: ["light"],
+    allow_on: ["light"],
+  };
+  assert.deepStrictEqual(checkGate(status, gate).allowed, false);
+});

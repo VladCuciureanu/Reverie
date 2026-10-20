@@ -43,6 +43,16 @@ export function checkGate(
     };
   }
 
+  if (!config.allow_on.includes(status.state)) {
+    const allowed = config.fallback === "allow";
+    return {
+      allowed,
+      reason: `Engineer is ${status.state}, which is not in allow_on. Fallback: ${config.fallback}.`,
+      sleep_state: status.state,
+      retry_after_seconds: allowed ? null : 1800,
+    };
+  }
+
   return {
     allowed: true,
     reason: `Engineer is ${status.state}. Deploy allowed.`,
